@@ -16,7 +16,14 @@ fn main() {
     let output_path: std::path::PathBuf = args.windows(2)
         .find(|w| w[0] == "-o")
         .map(|w| std::path::PathBuf::from(&w[1]))
-        .unwrap_or_else(|| input_path.with_extension("aeon"));
+        .unwrap_or_else(|| {
+            // Default to writing the assembled file into the current working directory
+            // rather than the input file's directory.
+            let stem = input_path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unnamed");
+            std::env::current_dir().unwrap().join(format!("{}.aeon", stem))
+        });
 
     let source = std::fs::read_to_string(input_path).unwrap_or_else(|e| {
         eprintln!("Cannot read {}: {}", input_path.display(), e);
