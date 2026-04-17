@@ -217,6 +217,40 @@ The CLI no longer requires `<program.aeon>` as an argument.
 
 The protocol must fail loudly and deterministically.
 
+### Protocol Error Details
+
+#### `ERROR` payload constraints
+
+- payload encoding is UTF-8
+- maximum payload size is 4096 bytes
+- if either side tries to emit an `ERROR` payload larger than 4096 bytes, the local code returns `ProtocolError::ErrorMessageTooLarge`
+
+This limit keeps error frames bounded and prevents protocol failures from turning into unbounded transport writes.
+
+#### TCP timeouts
+
+- read timeout is 30 seconds
+- write timeout is 30 seconds
+- both timeouts apply to sender and receiver streams
+
+Timeouts are part of the transport contract for this stage rather than an implementation detail. A stalled peer is treated as a protocol failure.
+
+#### `NEED_PROGRAM` verification
+
+If the receiver requests a `ProgramId` that does not match the sender's current program, the sender must:
+
+1. send `ERROR("Program ID mismatch: expected <id1>, got <id2>")`
+2. close the connection
+3. exit with code 1
+
+The sender must never send a different program just because a receiver asked for it.
+
+#### Snapshot checksum verification
+
+- checksum is computed over the `bincode(snapshot)` payload bytes
+- canonical format is `[blake3(payload)][payload]`
+- if canonical verification fails, parsing falls back to legacy raw `bincode` snapshot parsing
+
 Sender-side error cases:
 
 - missing `--snap-at` when `--send` is present
