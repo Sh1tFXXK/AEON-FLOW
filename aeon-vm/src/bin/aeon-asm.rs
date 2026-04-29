@@ -13,16 +13,20 @@ fn main() {
     }
 
     let input_path = Path::new(&args[1]);
-    let output_path: std::path::PathBuf = args.windows(2)
+    let output_path: std::path::PathBuf = args
+        .windows(2)
         .find(|w| w[0] == "-o")
         .map(|w| std::path::PathBuf::from(&w[1]))
         .unwrap_or_else(|| {
             // Default to writing the assembled file into the current working directory
             // rather than the input file's directory.
-            let stem = input_path.file_stem()
+            let stem = input_path
+                .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("unnamed");
-            std::env::current_dir().unwrap().join(format!("{}.aeon", stem))
+            std::env::current_dir()
+                .unwrap()
+                .join(format!("{}.aeon", stem))
         });
 
     let source = std::fs::read_to_string(input_path).unwrap_or_else(|e| {
@@ -30,14 +34,18 @@ fn main() {
         std::process::exit(1);
     });
 
-    let name = input_path.file_stem()
+    let name = input_path
+        .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("unnamed");
 
-    let program = Assembler::new().with_name(name).assemble(&source).unwrap_or_else(|e| {
-        eprintln!("Assembly error: {}", e);
-        std::process::exit(1);
-    });
+    let program = Assembler::new()
+        .with_name(name)
+        .assemble(&source)
+        .unwrap_or_else(|e| {
+            eprintln!("Assembly error: {}", e);
+            std::process::exit(1);
+        });
 
     program.save(&output_path).unwrap_or_else(|e| {
         eprintln!("Cannot write {}: {}", output_path.display(), e);
@@ -45,7 +53,14 @@ fn main() {
     });
 
     let id = program.id();
-    println!("Assembled: {} → {}", input_path.display(), output_path.display());
+    println!(
+        "Assembled: {} → {}",
+        input_path.display(),
+        output_path.display()
+    );
     println!("  Instructions: {}", program.instruction_count());
-    println!("  Program ID:   {:x}{:x}{:x}{:x}...", id[0], id[1], id[2], id[3]);
+    println!(
+        "  Program ID:   {:x}{:x}{:x}{:x}...",
+        id[0], id[1], id[2], id[3]
+    );
 }

@@ -5,7 +5,7 @@
 //   Comments:   ; this is a comment
 //   Labels:     loop:
 //   Registers:  r0 .. r255
-//   Numbers:    decimal only (e.g. 42)
+//   Numbers:    decimal (42) or hexadecimal (0x2a)
 //
 // Instructions (case-insensitive):
 //   load  r<dst>, <imm>       r[dst] = imm
@@ -17,6 +17,9 @@
 //   jmp   <label>             unconditional jump
 //   call  <label>             call subroutine
 //   ret                       return from subroutine
+//   alloc r<dst>, r<size>     allocate heap bytes; r[dst] = start address
+//   loadmem r<dst>, r<addr>   r[dst] = heap[r[addr]]
+//   storemem r<addr>, r<src>  heap[r[addr]] = r[src] as u8
 //   halt                      stop
 //
 // Example (fibonacci.asm):
@@ -60,14 +63,12 @@ enum RawInst {
 
 pub struct Assembler {
     name: String,
-    version: String,
 }
 
 impl Assembler {
     pub fn new() -> Self {
         Assembler {
             name: "unnamed".into(),
-            version: "0.1.0".into(),
         }
     }
 
@@ -78,7 +79,7 @@ impl Assembler {
 
     /// Assemble source text into a Program.
     pub fn assemble(&self, source: &str) -> Result<Program, AsmError> {
-        let source_hash = *blake3::hash(source.as_bytes()).as_bytes();
+        let _source_hash = *blake3::hash(source.as_bytes()).as_bytes();
 
         // Pass 1: collect labels and raw instructions.
         let mut labels: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -94,7 +95,10 @@ impl Assembler {
             if line.ends_with(':') {
                 let label = line.trim_end_matches(':').trim().to_lowercase();
                 if label.is_empty() {
-                    return Err(AsmError { line: line_no, message: "empty label".into() });
+                    return Err(AsmError {
+                        line: line_no,
+                        message: "empty label".into(),
+                    });
                 }
                 labels.insert(label, raw.len());
                 continue;
@@ -126,7 +130,9 @@ impl Assembler {
 
                 RawInst::CallLabel { label } => {
                     let target = resolve_label(&labels, label, *line_no)?;
-                    Inst::Call { addr: target as usize }
+                    Inst::Call {
+                        addr: target as usize,
+                    }
                 }
             };
             instructions.push(resolved);
@@ -136,7 +142,10 @@ impl Assembler {
     }
 
     fn parse_raw(&self, line: &str, line_no: usize) -> Result<RawInst, AsmError> {
-        let err = |msg: &str| AsmError { line: line_no, message: msg.into() };
+        let err = |msg: &str| AsmError {
+            line: line_no,
+            message: msg.into(),
+        };
 
         // Tokenize: split on whitespace and commas.
         let tokens: Vec<&str> = line
@@ -187,23 +196,50 @@ impl Assembler {
             "jz" => {
                 require_tokens(&tokens, 3, line_no)?;
                 let cond = parse_reg(tokens[1], line_no)?;
-                RawInst::JzLabel { cond, label: tokens[2].to_lowercase() }
+                RawInst::JzLabel {
+                    cond,
+                    label: tokens[2].to_lowercase(),
+                }
             }
             "jmp" => {
                 require_tokens(&tokens, 2, line_no)?;
-                RawInst::JmpLabel { label: tokens[1].to_lowercase() }
+                RawInst::JmpLabel {
+                    label: tokens[1].to_lowercase(),
+                }
             }
             "call" => {
                 require_tokens(&tokens, 2, line_no)?;
-                RawInst::CallLabel { label: tokens[1].to_lowercase() }
+                RawInst::CallLabel {
+                    label: tokens[1].to_lowercase(),
+                }
             }
             "ret" => RawInst::Resolved(Inst::Ret),
+            "alloc" => {
+                require_tokens(&tokens, 3, line_no)?;
+                let dst = parse_reg(tokens[1], line_no)?;
+                let size = parse_reg(tokens[2], line_no)?;
+                RawInst::Resolved(Inst::Alloc { dst, size })
+            }
+            "loadmem" => {
+                require_tokens(&tokens, 3, line_no)?;
+                let dst = parse_reg(tokens[1], line_no)?;
+                let addr = parse_reg(tokens[2], line_no)?;
+                RawInst::Resolved(Inst::LoadMem { dst, addr })
+            }
+            "storemem" => {
+                require_tokens(&tokens, 3, line_no)?;
+                let addr = parse_reg(tokens[1], line_no)?;
+                let src = parse_reg(tokens[2], line_no)?;
+                RawInst::Resolved(Inst::StoreMem { addr, src })
+            }
             "halt" => RawInst::Resolved(Inst::Halt),
 
-            _ => return Err(AsmError {
-                line: line_no,
-                message: format!("unknown instruction: '{}'", tokens[0]),
-            }),
+            _ => {
+                return Err(AsmError {
+                    line: line_no,
+                    message: format!("unknown instruction: '{}'", tokens[0]),
+                })
+            }
         };
 
         Ok(inst)
@@ -223,7 +259,12 @@ fn require_tokens(tokens: &[&str], n: usize, line: usize) -> Result<(), AsmError
     if tokens.len() < n {
         Err(AsmError {
             line,
-            message: format!("'{}' requires {} tokens, got {}", tokens[0], n, tokens.len()),
+            message: format!(
+                "'{}' requires {} tokens, got {}",
+                tokens[0],
+                n,
+                tokens.len()
+            ),
         })
     } else {
         Ok(())
@@ -233,7 +274,10 @@ fn require_tokens(tokens: &[&str], n: usize, line: usize) -> Result<(), AsmError
 fn parse_reg(s: &str, line: usize) -> Result<u8, AsmError> {
     let s = s.to_lowercase();
     if !s.starts_with('r') {
-        return Err(AsmError { line, message: format!("expected register like r0, got '{}'", s) });
+        return Err(AsmError {
+            line,
+            message: format!("expected register like r0, got '{}'", s),
+        });
     }
     s[1..].parse::<u8>().map_err(|_| AsmError {
         line,
@@ -242,7 +286,13 @@ fn parse_reg(s: &str, line: usize) -> Result<u8, AsmError> {
 }
 
 fn parse_u64(s: &str, line: usize) -> Result<u64, AsmError> {
-    s.parse::<u64>().map_err(|_| AsmError {
+    let parsed = if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16)
+    } else {
+        s.parse::<u64>()
+    };
+
+    parsed.map_err(|_| AsmError {
         line,
         message: format!("expected number, got '{}'", s),
     })

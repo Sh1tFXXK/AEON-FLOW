@@ -3,8 +3,7 @@
 //   aeon-run <file.aeon>                    run to completion
 //   aeon-run <file.aeon> --snap-at <n>      snapshot after n steps, save to file.snap
 //   aeon-run <file.aeon> --restore <snap>   restore snapshot and continue
-
-use aeon_vm::program::Program;
+//
 use aeon_vm::snapshot::Snapshot;
 use aeon_vm::store::ProgramStore;
 use aeon_vm::vm::VMState;
@@ -28,11 +27,13 @@ fn main() {
     let program = store.get(&program_id).unwrap();
 
     // Parse flags
-    let snap_at: Option<usize> = args.windows(2)
+    let snap_at: Option<usize> = args
+        .windows(2)
         .find(|w| w[0] == "--snap-at")
         .and_then(|w| w[1].parse().ok());
 
-    let restore_path: Option<&str> = args.windows(2)
+    let restore_path: Option<&str> = args
+        .windows(2)
         .find(|w| w[0] == "--restore")
         .map(|w| w[1].as_str());
 
@@ -42,7 +43,10 @@ fn main() {
             eprintln!("Failed to load snapshot: {}", e);
             std::process::exit(1);
         });
-        println!("[aeon-run] Restored snapshot (pc={}, steps={})", snap.pc, snap.steps);
+        println!(
+            "[aeon-run] Restored snapshot (pc={}, steps={})",
+            snap.pc, snap.steps
+        );
         snap.restore(&store).unwrap_or_else(|e| {
             eprintln!("Restore failed: {}", e);
             std::process::exit(1);
@@ -59,7 +63,11 @@ fn main() {
         if !halted {
             let snap_path = program_path.with_extension("snap");
             let snap = Snapshot::capture(&state);
-            println!("[aeon-run] Snapshot: {} bytes → {}", snap.byte_size(), snap_path.display());
+            println!(
+                "[aeon-run] Snapshot: {} bytes → {}",
+                snap.byte_size(),
+                snap_path.display()
+            );
             snap.save(&snap_path).expect("save snapshot");
         }
     } else {
@@ -71,7 +79,10 @@ fn main() {
     }
 
     // Print non-zero registers for observability
-    let nonzero: Vec<(usize, u64)> = state.regs.iter().enumerate()
+    let nonzero: Vec<(usize, u64)> = state
+        .regs
+        .iter()
+        .enumerate()
         .filter(|(_, &v)| v != 0)
         .map(|(i, &v)| (i, v))
         .collect();

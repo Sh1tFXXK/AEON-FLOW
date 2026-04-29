@@ -31,4 +31,3 @@ end:
     let steps2 = s2.run(&prog2).expect("run failed");
     println!("Inline run steps={}, r2={}", steps2, s2.regs[2]);
 }
-

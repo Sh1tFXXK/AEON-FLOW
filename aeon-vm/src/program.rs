@@ -1,6 +1,6 @@
-use serde::{Serialize, Deserialize};
 use crate::inst::Inst;
 use crate::ProgramId;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgramMetadata {
@@ -15,11 +15,19 @@ pub struct Program {
 
 impl Program {
     pub fn new(instructions: Vec<Inst>) -> Self {
-        Program { metadata: ProgramMetadata { name: "unnamed".into() }, instructions }
+        Program {
+            metadata: ProgramMetadata {
+                name: "unnamed".into(),
+            },
+            instructions,
+        }
     }
 
     pub fn from_parts(name: String, instructions: Vec<Inst>) -> Self {
-        Program { metadata: ProgramMetadata { name }, instructions }
+        Program {
+            metadata: ProgramMetadata { name },
+            instructions,
+        }
     }
 
     pub fn id(&self) -> ProgramId {
@@ -40,9 +48,16 @@ impl Program {
             .join("\n")
     }
 
+    pub fn to_bytes(&self) -> Vec<u8> {
+        bincode::serialize(self).unwrap()
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Result<Self, bincode::Error> {
+        bincode::deserialize(data)
+    }
+
     pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
-        let bytes = bincode::serialize(self).unwrap();
-        std::fs::write(path, bytes)
+        std::fs::write(path, self.to_bytes())
     }
 
     pub fn load(path: &std::path::Path) -> std::io::Result<Self> {
@@ -59,7 +74,10 @@ pub mod programs {
         // the correct number of times to produce fib(n).
         let counter = if n == 0 { 0 } else { n - 1 };
         Program::new(vec![
-            Inst::LoadImm { dst: 0, val: counter },
+            Inst::LoadImm {
+                dst: 0,
+                val: counter,
+            },
             Inst::LoadImm { dst: 1, val: 0 },
             Inst::LoadImm { dst: 2, val: 1 },
             Inst::LoadImm { dst: 4, val: 1 },

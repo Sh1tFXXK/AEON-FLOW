@@ -1,11 +1,15 @@
-use serde::{Serialize, Deserialize};
 use crate::inst::Inst;
 use crate::program::Program;
 use crate::ProgramId;
+use serde::{Deserialize, Serialize};
+
+pub const DEFAULT_HEAP_SIZE: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VMError {
     EmptyCallStack,
+    MemoryOutOfBounds { addr: usize, heap_len: usize },
+    OutOfMemory { requested: usize, available: usize },
     RuntimeError(String),
 }
 
@@ -13,6 +17,23 @@ impl std::fmt::Display for VMError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VMError::EmptyCallStack => write!(f, "empty call stack"),
+            VMError::MemoryOutOfBounds { addr, heap_len } => {
+                write!(
+                    f,
+                    "memory out of bounds: addr={} heap_len={}",
+                    addr, heap_len
+                )
+            }
+            VMError::OutOfMemory {
+                requested,
+                available,
+            } => {
+                write!(
+                    f,
+                    "out of memory: requested={} available={}",
+                    requested, available
+                )
+            }
             VMError::RuntimeError(s) => write!(f, "runtime error: {}", s),
         }
     }
@@ -28,10 +49,12 @@ pub enum StepResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VMState {
     program_id: ProgramId,
-    pub regs: Vec<u64>,  // 256 registers
+    pub regs: Vec<u64>, // 256 registers
     pub pc: usize,
     pub call_stack: Vec<usize>,
     pub steps: usize,
+    pub heap: Vec<u8>,
+    pub heap_top: usize,
 }
 
 impl VMState {
@@ -42,6 +65,8 @@ impl VMState {
             pc: 0,
             call_stack: Vec::new(),
             steps: 0,
+            heap: vec![0; DEFAULT_HEAP_SIZE],
+            heap_top: 0,
         }
     }
 
@@ -60,18 +85,18 @@ impl VMState {
                 self.pc += 1;
             }
             Inst::Add { dst, a, b } => {
-                self.regs[*dst as usize] = self.regs[*a as usize]
-                    .wrapping_add(self.regs[*b as usize]);
+                self.regs[*dst as usize] =
+                    self.regs[*a as usize].wrapping_add(self.regs[*b as usize]);
                 self.pc += 1;
             }
             Inst::Sub { dst, a, b } => {
-                self.regs[*dst as usize] = self.regs[*a as usize]
-                    .wrapping_sub(self.regs[*b as usize]);
+                self.regs[*dst as usize] =
+                    self.regs[*a as usize].wrapping_sub(self.regs[*b as usize]);
                 self.pc += 1;
             }
             Inst::Mul { dst, a, b } => {
-                self.regs[*dst as usize] = self.regs[*a as usize]
-                    .wrapping_mul(self.regs[*b as usize]);
+                self.regs[*dst as usize] =
+                    self.regs[*a as usize].wrapping_mul(self.regs[*b as usize]);
                 self.pc += 1;
             }
             Inst::Jz { cond, off } => {
@@ -97,6 +122,48 @@ impl VMState {
             }
             Inst::Print { r } => {
                 println!("r[{}] = {}", r, self.regs[*r as usize]);
+                self.pc += 1;
+            }
+            Inst::LoadMem { dst, addr } => {
+                let addr = match self.checked_heap_addr(*addr) {
+                    Ok(addr) => addr,
+                    Err(err) => return StepResult::Error(err),
+                };
+                self.regs[*dst as usize] = self.heap[addr] as u64;
+                self.pc += 1;
+            }
+            Inst::StoreMem { addr, src } => {
+                let addr = match self.checked_heap_addr(*addr) {
+                    Ok(addr) => addr,
+                    Err(err) => return StepResult::Error(err),
+                };
+                self.heap[addr] = self.regs[*src as usize] as u8;
+                self.pc += 1;
+            }
+            Inst::Alloc { dst, size } => {
+                let requested = match usize::try_from(self.regs[*size as usize]) {
+                    Ok(size) => size,
+                    Err(_) => {
+                        return StepResult::Error(VMError::OutOfMemory {
+                            requested: usize::MAX,
+                            available: self.heap.len().saturating_sub(self.heap_top),
+                        });
+                    }
+                };
+                let Some(next_top) = self.heap_top.checked_add(requested) else {
+                    return StepResult::Error(VMError::OutOfMemory {
+                        requested,
+                        available: self.heap.len().saturating_sub(self.heap_top),
+                    });
+                };
+                if next_top > self.heap.len() {
+                    return StepResult::Error(VMError::OutOfMemory {
+                        requested,
+                        available: self.heap.len().saturating_sub(self.heap_top),
+                    });
+                }
+                self.regs[*dst as usize] = self.heap_top as u64;
+                self.heap_top = next_top;
                 self.pc += 1;
             }
             Inst::Halt => return StepResult::Halted,
@@ -128,5 +195,20 @@ impl VMState {
 
     pub fn program_id(&self) -> ProgramId {
         self.program_id
+    }
+
+    fn checked_heap_addr(&self, reg: u8) -> Result<usize, VMError> {
+        let addr =
+            usize::try_from(self.regs[reg as usize]).map_err(|_| VMError::MemoryOutOfBounds {
+                addr: usize::MAX,
+                heap_len: self.heap.len(),
+            })?;
+        if addr >= self.heap.len() {
+            return Err(VMError::MemoryOutOfBounds {
+                addr,
+                heap_len: self.heap.len(),
+            });
+        }
+        Ok(addr)
     }
 }

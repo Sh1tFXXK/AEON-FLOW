@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Inst {
@@ -12,6 +12,9 @@ pub enum Inst {
     Call { addr: usize },
     Ret,
     Print { r: u8 },
+    LoadMem { dst: u8, addr: u8 },
+    StoreMem { addr: u8, src: u8 },
+    Alloc { dst: u8, size: u8 },
     Halt,
 }
 
@@ -28,6 +31,9 @@ impl Inst {
             Inst::Call { addr } => format!("call {}", addr),
             Inst::Ret => "ret".to_string(),
             Inst::Print { r } => format!("print r{}", r),
+            Inst::LoadMem { dst, addr } => format!("loadmem r{}, r{}", dst, addr),
+            Inst::StoreMem { addr, src } => format!("storemem r{}, r{}", addr, src),
+            Inst::Alloc { dst, size } => format!("alloc r{}, r{}", dst, size),
             Inst::Halt => "halt".to_string(),
         }
     }

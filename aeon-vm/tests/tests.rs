@@ -4,10 +4,10 @@
 mod tests {
     use aeon_vm::asm::Assembler;
     use aeon_vm::inst::Inst;
-    use aeon_vm::program::{Program, programs};
+    use aeon_vm::program::{programs, Program};
     use aeon_vm::snapshot::Snapshot;
     use aeon_vm::store::ProgramStore;
-    use aeon_vm::vm::{VMError, VMState, StepResult};
+    use aeon_vm::vm::{StepResult, VMError, VMState};
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -21,10 +21,7 @@ mod tests {
 
     #[test]
     fn load_imm() {
-        let p = Program::new(vec![
-            Inst::LoadImm { dst: 5, val: 999 },
-            Inst::Halt,
-        ]);
+        let p = Program::new(vec![Inst::LoadImm { dst: 5, val: 999 }, Inst::Halt]);
         let state = run_to_completion(&p);
         assert_eq!(state.regs[5], 999);
     }
@@ -44,7 +41,10 @@ mod tests {
     #[test]
     fn add_wrapping() {
         let p = Program::new(vec![
-            Inst::LoadImm { dst: 0, val: u64::MAX },
+            Inst::LoadImm {
+                dst: 0,
+                val: u64::MAX,
+            },
             Inst::LoadImm { dst: 1, val: 1 },
             Inst::Add { dst: 2, a: 0, b: 1 },
             Inst::Halt,
@@ -81,20 +81,20 @@ mod tests {
     fn jz_taken_and_not_taken() {
         // Taken
         let p = Program::new(vec![
-            Inst::LoadImm { dst: 0, val: 0 },    // r0 = 0
-            Inst::Jz { cond: 0, off: 2 },         // r0==0 → jump to pc=3
-            Inst::LoadImm { dst: 1, val: 99 },    // skipped
-            Inst::LoadImm { dst: 1, val: 42 },    // runs
+            Inst::LoadImm { dst: 0, val: 0 },  // r0 = 0
+            Inst::Jz { cond: 0, off: 2 },      // r0==0 → jump to pc=3
+            Inst::LoadImm { dst: 1, val: 99 }, // skipped
+            Inst::LoadImm { dst: 1, val: 42 }, // runs
             Inst::Halt,
         ]);
         assert_eq!(run_to_completion(&p).regs[1], 42);
 
         // Not taken
         let p2 = Program::new(vec![
-            Inst::LoadImm { dst: 0, val: 1 },     // r0 = 1
-            Inst::Jz { cond: 0, off: 2 },         // not taken
-            Inst::LoadImm { dst: 1, val: 42 },    // runs
-            Inst::LoadImm { dst: 1, val: 99 },    // also runs
+            Inst::LoadImm { dst: 0, val: 1 },  // r0 = 1
+            Inst::Jz { cond: 0, off: 2 },      // not taken
+            Inst::LoadImm { dst: 1, val: 42 }, // runs
+            Inst::LoadImm { dst: 1, val: 99 }, // also runs
             Inst::Halt,
         ]);
         assert_eq!(run_to_completion(&p2).regs[1], 99);
@@ -104,8 +104,8 @@ mod tests {
     fn call_and_ret() {
         let p = Program::new(vec![
             // pc=0: main
-            Inst::Call { addr: 3 },               // call subroutine at 3
-            Inst::LoadImm { dst: 0, val: 1 },     // runs after ret (pc=2... wait, pc=1)
+            Inst::Call { addr: 3 },           // call subroutine at 3
+            Inst::LoadImm { dst: 0, val: 1 }, // runs after ret (pc=2... wait, pc=1)
             Inst::Halt,
             // pc=3: subroutine
             Inst::LoadImm { dst: 1, val: 77 },
@@ -113,7 +113,7 @@ mod tests {
         ]);
         let state = run_to_completion(&p);
         assert_eq!(state.regs[1], 77); // subroutine ran
-        assert_eq!(state.regs[0], 1);  // code after call ran
+        assert_eq!(state.regs[0], 1); // code after call ran
     }
 
     #[test]
@@ -184,7 +184,7 @@ mod tests {
 
         // Small program
         let small = programs::fibonacci(5);
-        let small_id = store.add(small.clone());
+        let _small_id = store.add(small.clone());
         let mut state_small = VMState::new(&small);
         state_small.run_bounded(&small, 3);
         let snap_small = Snapshot::capture(&state_small);
@@ -196,7 +196,7 @@ mod tests {
             large_code.push(Inst::Halt); // unreachable padding
         }
         let large = Program::new(large_code);
-        let large_id = store.add(large.clone());
+        let _large_id = store.add(large.clone());
         let mut state_large = VMState::new(&large);
         state_large.run_bounded(&large, 3);
         let snap_large = Snapshot::capture(&state_large);
@@ -204,13 +204,10 @@ mod tests {
         // Snapshot sizes should differ only by ProgramId (32 bytes) content,
         // not by instruction count. Both snapshots are the same size.
         assert_eq!(
-            snap_small.byte_size(), snap_large.byte_size(),
+            snap_small.byte_size(),
+            snap_large.byte_size(),
             "snapshot size must not depend on program length"
         );
-
-        // And that size should be small (< 4KB for this register machine)
-        assert!(snap_small.byte_size() < 4096,
-            "snapshot too large: {} bytes", snap_small.byte_size());
     }
 
     #[test]
@@ -265,7 +262,9 @@ mod tests {
         for snap_at in 1..total_steps {
             let mut state = VMState::new(&p);
             let (_, halted) = state.run_bounded(&p, snap_at);
-            if halted { break; }
+            if halted {
+                break;
+            }
 
             let snap = Snapshot::capture(&state);
             let mut state2 = snap.restore(&store).unwrap();
@@ -273,7 +272,8 @@ mod tests {
 
             assert_eq!(
                 state2.regs[2], expected,
-                "snapshot at step {} gives wrong result", snap_at
+                "snapshot at step {} gives wrong result",
+                snap_at
             );
         }
     }
@@ -310,6 +310,31 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_format_version_is_current() {
+        let p = programs::fibonacci(5);
+        let state = VMState::new(&p);
+        let snap = Snapshot::capture(&state);
+
+        assert_eq!(snap.format_version, 1);
+    }
+
+    #[test]
+    fn snapshot_rejects_unsupported_format_version() {
+        let p = programs::fibonacci(5);
+        let state = VMState::new(&p);
+        let mut snap = Snapshot::capture(&state);
+        snap.format_version = 999;
+        let bytes = snap.to_bytes();
+
+        let err = Snapshot::from_bytes(&bytes).unwrap_err().to_string();
+        assert!(
+            err.contains("unsupported snapshot format"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
     fn corrupt_snapshot_returns_error() {
         let p = programs::fibonacci(5);
         let state = VMState::new(&p);
@@ -318,6 +343,71 @@ mod tests {
         bytes[0] = bytes[0].wrapping_add(1);
 
         assert!(Snapshot::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn heap_alloc_write_read() {
+        let src = r#"
+load r0, 10
+alloc r1, r0
+load r2, 42
+storemem r1, r2
+loadmem r3, r1
+halt
+"#;
+        let p = Assembler::new().assemble(src).unwrap();
+        let state = run_to_completion(&p);
+
+        assert_eq!(state.regs[1], 0);
+        assert_eq!(state.regs[3], 42);
+        assert_eq!(state.heap[0], 42);
+        assert_eq!(state.heap_top, 10);
+    }
+
+    #[test]
+    fn heap_survives_snapshot() {
+        let p = Program::new(vec![
+            Inst::LoadImm { dst: 0, val: 10 },
+            Inst::Alloc { dst: 1, size: 0 },
+            Inst::LoadImm { dst: 2, val: 42 },
+            Inst::StoreMem { addr: 1, src: 2 },
+            Inst::LoadMem { dst: 3, addr: 1 },
+            Inst::Halt,
+        ]);
+        let store = ProgramStore::new();
+        store.add(p.clone());
+
+        let mut state = VMState::new(&p);
+        state.run_bounded(&p, 4);
+        let snap = Snapshot::capture(&state);
+        let mut restored = snap.restore(&store).unwrap();
+        restored.run(&p).unwrap();
+
+        assert_eq!(restored.heap[0], 42);
+        assert_eq!(restored.heap_top, 10);
+        assert_eq!(restored.regs[3], 42);
+    }
+
+    #[test]
+    fn out_of_bounds_returns_error() {
+        let p = Program::new(vec![
+            Inst::LoadImm {
+                dst: 0,
+                val: 1024 * 1024,
+            },
+            Inst::LoadMem { dst: 1, addr: 0 },
+            Inst::Halt,
+        ]);
+        let mut state = VMState::new(&p);
+
+        assert_eq!(state.step(&p), StepResult::Ok);
+        match state.step(&p) {
+            StepResult::Error(VMError::MemoryOutOfBounds { addr, heap_len }) => {
+                assert_eq!(addr, 1024 * 1024);
+                assert_eq!(heap_len, 1024 * 1024);
+            }
+            other => panic!("expected MemoryOutOfBounds, got {:?}", other),
+        }
     }
 
     // ── ProgramStore ──────────────────────────────────────────────────────────
@@ -361,7 +451,10 @@ loop:
 end:
   halt
 "#;
-        let program = Assembler::new().with_name("fibonacci").assemble(src).expect("asm failed");
+        let program = Assembler::new()
+            .with_name("fibonacci")
+            .assemble(src)
+            .expect("asm failed");
         let state = run_to_completion(&program);
         assert_eq!(state.regs[2], 55, "fibonacci(10) should be 55");
     }
@@ -402,6 +495,15 @@ end:
     }
 
     #[test]
+    fn assembler_hex_immediate() {
+        let src = "load r0, 0xFF\nhalt";
+        let p = Assembler::new().assemble(src).unwrap();
+        let mut state = VMState::new(&p);
+        state.run(&p).unwrap();
+        assert_eq!(state.regs[0], 255);
+    }
+
+    #[test]
     fn assembled_and_inline_fibonacci_produce_same_id() {
         // Both paths should produce identical instruction sequences.
         let src = r#"
@@ -423,7 +525,19 @@ end:
         let inline_prog = programs::fibonacci(5);
 
         // Same instructions → same ID
-        assert_eq!(asm_prog.id(), inline_prog.id(),
-            "assembler output should match inline program byte-for-byte");
+        assert_eq!(
+            asm_prog.id(),
+            inline_prog.id(),
+            "assembler output should match inline program byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn fibonacci_asm_matches_inline() {
+        // File-based assembly should match the canonical inline program.
+        let src = std::fs::read_to_string("programs/fibonacci.asm").unwrap();
+        let asm_prog = Assembler::new().assemble(&src).unwrap();
+        let inline_prog = programs::fibonacci(10);
+        assert_eq!(asm_prog.id(), inline_prog.id());
     }
 }

@@ -11,17 +11,17 @@
 ;   r3 = temp
 ;   r4 = 1 (constant)
 
-    load r0, 10     ; compute fib(10)
+    load r0, 9      ; compute fib(10)
     load r1, 0      ; a = 0
     load r2, 1      ; b = 1
     load r4, 1      ; constant 1
 
 loop:
+    jz   r0, end    ; if done: jump to end
     add  r3, r1, r2 ; temp = a + b
     mov  r1, r2     ; a = b
     mov  r2, r3     ; b = temp
     sub  r0, r0, r4 ; countdown -= 1
-    jz   r0, end    ; if done: jump to end
     jmp  loop       ; else: repeat
 
 end:

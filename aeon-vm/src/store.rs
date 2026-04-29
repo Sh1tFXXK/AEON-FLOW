@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-use std::path::Path;
 use crate::program::Program;
 use crate::ProgramId;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::{Arc, RwLock};
 
 pub struct ProgramStore {
     programs: RwLock<HashMap<ProgramId, Arc<Program>>>,
