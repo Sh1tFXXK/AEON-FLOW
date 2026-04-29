@@ -146,6 +146,12 @@ mod tests {
 "#
     }
 
+    fn write_vfs_file(state: &mut VMState, path: &str, bytes: &[u8]) {
+        let fd = state.vfs.open(path, true).unwrap();
+        state.vfs.write(fd, bytes).unwrap();
+        state.vfs.close(fd).unwrap();
+    }
+
     // ── VM instruction correctness ────────────────────────────────────────────
 
     #[test]
@@ -623,6 +629,93 @@ halt
         let output = ForthPrototype::run(&mut state).unwrap();
 
         assert_eq!(output, vec![37, 7]);
+    }
+
+    #[test]
+    fn forth_comments_comparisons_and_depth() {
+        let program = Program::new(vec![Inst::Halt]);
+        let mut state = VMState::new(&program);
+        let src = r#"
+\ backslash comments run to end of line
+( paren comments are ignored )
+5 5 = .
+3 4 < .
+9 2 > .
+7 dup * .
+depth .
+"#;
+
+        ForthPrototype::start(&mut state, src).unwrap();
+        let output = ForthPrototype::run(&mut state).unwrap();
+
+        assert_eq!(output, vec![1, 1, 1, 49, 0]);
+    }
+
+    #[test]
+    fn forth_function_calls_have_local_variable_frames() {
+        let program = Program::new(vec![Inst::Halt]);
+        let mut state = VMState::new(&program);
+        let src = r#"
+: keepx
+  var x set x
+  get x
+;
+1 var x set x
+41 keepx .
+get x .
+"#;
+
+        ForthPrototype::start(&mut state, src).unwrap();
+        let output = ForthPrototype::run(&mut state).unwrap();
+
+        assert_eq!(output, vec![41, 1]);
+    }
+
+    #[test]
+    fn forth_include_reads_and_executes_vfs_file() {
+        let program = Program::new(vec![Inst::Halt]);
+        let mut state = VMState::new(&program);
+        write_vfs_file(&mut state, "/lib/answer.fs", b": answer 40 2 + ;");
+
+        ForthPrototype::start(&mut state, "include /lib/answer.fs answer .").unwrap();
+        let output = ForthPrototype::run(&mut state).unwrap();
+
+        assert_eq!(output, vec![42]);
+    }
+
+    #[test]
+    fn forth_start_file_reads_and_executes_vfs_program() {
+        let program = Program::new(vec![Inst::Halt]);
+        let mut state = VMState::new(&program);
+        write_vfs_file(&mut state, "/apps/main.fs", b"21 2 * .");
+
+        ForthPrototype::start_file(&mut state, "/apps/main.fs").unwrap();
+        let output = ForthPrototype::run(&mut state).unwrap();
+
+        assert_eq!(output, vec![42]);
+    }
+
+    #[test]
+    fn forth_include_state_survives_snapshot() {
+        let program = Program::new(vec![Inst::Halt]);
+        let store = ProgramStore::new();
+        store.add(program.clone());
+
+        let mut state = VMState::new(&program);
+        write_vfs_file(&mut state, "/lib/count.fs", b": count5 5 0 do i . loop ;");
+        ForthPrototype::start(&mut state, "include /lib/count.fs count5").unwrap();
+        let halted = ForthPrototype::run_steps(&mut state, 6).unwrap();
+        assert!(!halted);
+
+        let snap = Snapshot::capture(&state);
+        let mut restored = snap.restore(&store).unwrap();
+        let output = ForthPrototype::run(&mut restored).unwrap();
+
+        assert_eq!(output, vec![0, 1, 2, 3, 4]);
+        assert!(ForthPrototype::stack(&restored).unwrap().is_empty());
+        assert!(ForthPrototype::dictionary_words(&mut restored)
+            .unwrap()
+            .contains(&"count5".to_string()));
     }
 
     // ── ProgramStore ──────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+use crate::vfs::VirtualFS;
 use crate::vm::VMState;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ pub enum ForthError {
     BadControl(String),
     Vfs(String),
     Codec(String),
+    Utf8(String),
 }
 
 impl std::fmt::Display for ForthError {
@@ -32,6 +34,7 @@ impl std::fmt::Display for ForthError {
             ForthError::BadControl(msg) => write!(f, "bad forth control flow: {}", msg),
             ForthError::Vfs(msg) => write!(f, "forth vfs error: {}", msg),
             ForthError::Codec(msg) => write!(f, "forth codec error: {}", msg),
+            ForthError::Utf8(msg) => write!(f, "forth utf-8 error: {}", msg),
         }
     }
 }
@@ -49,7 +52,7 @@ struct Runtime {
     ip: usize,
     frames: Vec<Frame>,
     loops: Vec<LoopFrame>,
-    vars: HashMap<String, u64>,
+    envs: Vec<HashMap<String, u64>>,
     output: Vec<u64>,
     halted: bool,
 }
@@ -71,7 +74,7 @@ pub struct ForthPrototype;
 
 impl ForthPrototype {
     pub fn start(vm: &mut VMState, source: &str) -> Result<(), ForthError> {
-        let (dict, tokens) = compile_source(source)?;
+        let (dict, tokens) = compile_source(&mut vm.vfs, source)?;
         vm.regs[STACK_REG] = STACK_BASE as u64;
         save(&mut vm.vfs, DICT_PATH, &dict)?;
         save(
@@ -82,11 +85,17 @@ impl ForthPrototype {
                 ip: 0,
                 frames: Vec::new(),
                 loops: Vec::new(),
-                vars: HashMap::new(),
+                envs: vec![HashMap::new()],
                 output: Vec::new(),
                 halted: false,
             },
         )
+    }
+
+    pub fn start_file(vm: &mut VMState, path: &str) -> Result<(), ForthError> {
+        let bytes = read_raw(&mut vm.vfs, path)?;
+        let source = String::from_utf8(bytes).map_err(|err| ForthError::Utf8(err.to_string()))?;
+        Self::start(vm, &source)
     }
 
     pub fn run(vm: &mut VMState) -> Result<Vec<u64>, ForthError> {
@@ -119,18 +128,72 @@ impl ForthPrototype {
         let runtime: Runtime = load(&mut vm.vfs, RUNTIME_PATH)?;
         Ok(runtime.output)
     }
+
+    pub fn stack(vm: &VMState) -> Result<Vec<u64>, ForthError> {
+        let ptr = vm.regs[STACK_REG] as usize;
+        if ptr < STACK_BASE || ptr > STACK_LIMIT || ptr > vm.heap.len() {
+            return Err(ForthError::StackUnderflow);
+        }
+        if !(ptr - STACK_BASE).is_multiple_of(8) {
+            return Err(ForthError::BadControl("stack pointer is unaligned".into()));
+        }
+
+        let mut values = Vec::new();
+        let mut addr = STACK_BASE;
+        while addr < ptr {
+            let mut bytes = [0u8; 8];
+            bytes.copy_from_slice(&vm.heap[addr..addr + 8]);
+            values.push(u64::from_le_bytes(bytes));
+            addr += 8;
+        }
+        Ok(values)
+    }
+
+    pub fn dictionary_words(vm: &mut VMState) -> Result<Vec<String>, ForthError> {
+        let dict: Dictionary = load(&mut vm.vfs, DICT_PATH)?;
+        let mut words = dict.words.keys().cloned().collect::<Vec<_>>();
+        words.sort();
+        Ok(words)
+    }
 }
 
-fn compile_source(source: &str) -> Result<(Dictionary, Vec<String>), ForthError> {
-    let tokens = source
-        .split_whitespace()
-        .map(|token| token.to_ascii_lowercase())
-        .collect::<Vec<_>>();
+fn compile_source(
+    vfs: &mut VirtualFS,
+    source: &str,
+) -> Result<(Dictionary, Vec<String>), ForthError> {
     let mut dict = Dictionary::default();
     let mut main = Vec::new();
+    compile_into(vfs, source, &mut dict, &mut main, 0)?;
+    Ok((dict, main))
+}
+
+fn compile_into(
+    vfs: &mut VirtualFS,
+    source: &str,
+    dict: &mut Dictionary,
+    main: &mut Vec<String>,
+    depth: usize,
+) -> Result<(), ForthError> {
+    if depth > 16 {
+        return Err(ForthError::BadDefinition("include depth exceeded".into()));
+    }
+
+    let tokens = tokenize(source);
     let mut i = 0;
 
     while i < tokens.len() {
+        if tokens[i] == "include" {
+            let path = tokens
+                .get(i + 1)
+                .ok_or_else(|| ForthError::BadDefinition("include missing path".into()))?;
+            let bytes = read_raw(vfs, path)?;
+            let source =
+                String::from_utf8(bytes).map_err(|err| ForthError::Utf8(err.to_string()))?;
+            compile_into(vfs, &source, dict, main, depth + 1)?;
+            i += 2;
+            continue;
+        }
+
         if tokens[i] != ":" {
             if tokens[i] == ";" {
                 return Err(ForthError::BadDefinition("unexpected ;".into()));
@@ -156,12 +219,49 @@ fn compile_source(source: &str) -> Result<(Dictionary, Vec<String>), ForthError>
         i += 1;
     }
 
-    Ok((dict, main))
+    Ok(())
+}
+
+fn tokenize(source: &str) -> Vec<String> {
+    let mut out = String::with_capacity(source.len());
+    let mut paren_comment = false;
+    let mut line_comment = false;
+
+    for ch in source.chars() {
+        if line_comment {
+            if ch == '\n' {
+                line_comment = false;
+                out.push(' ');
+            }
+            continue;
+        }
+        if paren_comment {
+            if ch == ')' {
+                paren_comment = false;
+            }
+            continue;
+        }
+        match ch {
+            '\\' => line_comment = true,
+            '(' => {
+                paren_comment = true;
+                out.push(' ');
+            }
+            _ => out.push(ch),
+        }
+    }
+
+    out.split_whitespace()
+        .map(|token| token.to_ascii_lowercase())
+        .collect()
 }
 
 fn step_once(vm: &mut VMState, dict: &Dictionary, runtime: &mut Runtime) -> Result<(), ForthError> {
     if runtime.ip >= runtime.tokens.len() {
         if let Some(frame) = runtime.frames.pop() {
+            if runtime.envs.len() > 1 {
+                runtime.envs.pop();
+            }
             runtime.tokens = frame.tokens;
             runtime.ip = frame.ip;
         } else {
@@ -176,33 +276,47 @@ fn step_once(vm: &mut VMState, dict: &Dictionary, runtime: &mut Runtime) -> Resu
         "+" => binop(vm, u64::wrapping_add),
         "-" => binop(vm, u64::wrapping_sub),
         "*" => binop(vm, u64::wrapping_mul),
+        "=" => compare(vm, |a, b| a == b),
+        "<" => compare(vm, |a, b| a < b),
+        ">" => compare(vm, |a, b| a > b),
         "dup" => {
             let value = pop(vm)?;
             push(vm, value)?;
             push(vm, value)
         }
+        "swap" => {
+            let b = pop(vm)?;
+            let a = pop(vm)?;
+            push(vm, b)?;
+            push(vm, a)
+        }
+        "over" => {
+            let b = pop(vm)?;
+            let a = pop(vm)?;
+            push(vm, a)?;
+            push(vm, b)?;
+            push(vm, a)
+        }
         "drop" => pop(vm).map(|_| ()),
+        "depth" => push(vm, stack_depth(vm)? as u64),
         "." => {
             runtime.output.push(pop(vm)?);
             Ok(())
         }
         "var" => {
             let name = next_token(runtime, "var")?;
-            runtime.vars.entry(name).or_insert(0);
+            current_env(runtime).entry(name).or_insert(0);
             Ok(())
         }
         "set" => {
             let name = next_token(runtime, "set")?;
             let value = pop(vm)?;
-            runtime.vars.insert(name, value);
+            set_var(runtime, name, value);
             Ok(())
         }
         "get" => {
             let name = next_token(runtime, "get")?;
-            let value = *runtime
-                .vars
-                .get(&name)
-                .ok_or_else(|| ForthError::UnknownVariable(name.clone()))?;
+            let value = get_var(runtime, &name)?;
             push(vm, value)
         }
         "if" => {
@@ -255,6 +369,7 @@ fn step_once(vm: &mut VMState, dict: &Dictionary, runtime: &mut Runtime) -> Resu
                 });
                 runtime.tokens = body.clone();
                 runtime.ip = 0;
+                runtime.envs.push(HashMap::new());
                 Ok(())
             } else if let Ok(value) = word.parse::<u64>() {
                 push(vm, value)
@@ -301,6 +416,49 @@ fn binop(vm: &mut VMState, op: fn(u64, u64) -> u64) -> Result<(), ForthError> {
     push(vm, op(a, b))
 }
 
+fn compare(vm: &mut VMState, op: fn(u64, u64) -> bool) -> Result<(), ForthError> {
+    let b = pop(vm)?;
+    let a = pop(vm)?;
+    push(vm, u64::from(op(a, b)))
+}
+
+fn current_env(runtime: &mut Runtime) -> &mut HashMap<String, u64> {
+    if runtime.envs.is_empty() {
+        runtime.envs.push(HashMap::new());
+    }
+    runtime.envs.last_mut().expect("envs is non-empty")
+}
+
+fn set_var(runtime: &mut Runtime, name: String, value: u64) {
+    if let Some(env) = runtime
+        .envs
+        .iter_mut()
+        .rev()
+        .find(|env| env.contains_key(&name))
+    {
+        env.insert(name, value);
+    } else {
+        current_env(runtime).insert(name, value);
+    }
+}
+
+fn get_var(runtime: &Runtime, name: &str) -> Result<u64, ForthError> {
+    runtime
+        .envs
+        .iter()
+        .rev()
+        .find_map(|env| env.get(name).copied())
+        .ok_or_else(|| ForthError::UnknownVariable(name.into()))
+}
+
+fn stack_depth(vm: &VMState) -> Result<usize, ForthError> {
+    let ptr = vm.regs[STACK_REG] as usize;
+    if ptr < STACK_BASE || ptr > STACK_LIMIT || ptr > vm.heap.len() {
+        return Err(ForthError::StackUnderflow);
+    }
+    Ok((ptr - STACK_BASE) / 8)
+}
+
 fn push(vm: &mut VMState, value: u64) -> Result<(), ForthError> {
     let ptr = vm.regs[STACK_REG] as usize;
     let end = ptr.checked_add(8).ok_or(ForthError::StackOverflow)?;
@@ -324,11 +482,7 @@ fn pop(vm: &mut VMState) -> Result<u64, ForthError> {
     Ok(u64::from_le_bytes(bytes))
 }
 
-fn save<T: Serialize>(
-    vfs: &mut crate::vfs::VirtualFS,
-    path: &str,
-    value: &T,
-) -> Result<(), ForthError> {
+fn save<T: Serialize>(vfs: &mut VirtualFS, path: &str, value: &T) -> Result<(), ForthError> {
     let payload = bincode::serialize(value).map_err(|err| ForthError::Codec(err.to_string()))?;
     let mut bytes = (payload.len() as u64).to_le_bytes().to_vec();
     bytes.extend_from_slice(&payload);
@@ -341,7 +495,23 @@ fn save<T: Serialize>(
         .map_err(|err| ForthError::Vfs(err.to_string()))
 }
 
-fn load<T: DeserializeOwned>(vfs: &mut crate::vfs::VirtualFS, path: &str) -> Result<T, ForthError> {
+fn load<T: DeserializeOwned>(vfs: &mut VirtualFS, path: &str) -> Result<T, ForthError> {
+    let bytes = read_raw(vfs, path)?;
+
+    if bytes.len() < 8 {
+        return Err(ForthError::Codec(format!("{} is missing length", path)));
+    }
+    let mut len_bytes = [0u8; 8];
+    len_bytes.copy_from_slice(&bytes[..8]);
+    let len = u64::from_le_bytes(len_bytes) as usize;
+    let end = 8 + len;
+    if bytes.len() < end {
+        return Err(ForthError::Codec(format!("{} is truncated", path)));
+    }
+    bincode::deserialize(&bytes[8..end]).map_err(|err| ForthError::Codec(err.to_string()))
+}
+
+fn read_raw(vfs: &mut VirtualFS, path: &str) -> Result<Vec<u8>, ForthError> {
     let fd = vfs
         .open(path, false)
         .map_err(|err| ForthError::Vfs(err.to_string()))?;
@@ -358,16 +528,5 @@ fn load<T: DeserializeOwned>(vfs: &mut crate::vfs::VirtualFS, path: &str) -> Res
     }
     vfs.close(fd)
         .map_err(|err| ForthError::Vfs(err.to_string()))?;
-
-    if bytes.len() < 8 {
-        return Err(ForthError::Codec(format!("{} is missing length", path)));
-    }
-    let mut len_bytes = [0u8; 8];
-    len_bytes.copy_from_slice(&bytes[..8]);
-    let len = u64::from_le_bytes(len_bytes) as usize;
-    let end = 8 + len;
-    if bytes.len() < end {
-        return Err(ForthError::Codec(format!("{} is truncated", path)));
-    }
-    bincode::deserialize(&bytes[8..end]).map_err(|err| ForthError::Codec(err.to_string()))
+    Ok(bytes)
 }
