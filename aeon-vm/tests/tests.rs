@@ -5,6 +5,7 @@ mod tests {
     use aeon_vm::asm::Assembler;
     use aeon_vm::forth::ForthPrototype;
     use aeon_vm::inst::Inst;
+    use aeon_vm::jit::{JitEngine, HOT_THRESHOLD};
     use aeon_vm::program::{programs, Program};
     use aeon_vm::snapshot::Snapshot;
     use aeon_vm::store::ProgramStore;
@@ -278,6 +279,57 @@ mod tests {
             let state = run_to_completion(&p);
             assert_eq!(state.regs[1], exp, "{}! should be {}", n, exp);
         }
+    }
+
+    // ── JIT ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn jit_fib40_matches_interpreter() {
+        let p = programs::fibonacci(40);
+        let expected = run_to_completion(&p);
+
+        let mut state = VMState::new(&p);
+        let mut jit = JitEngine::new().unwrap();
+        jit.compile(&p).unwrap();
+        jit.run_compiled(&p, &mut state).unwrap();
+
+        assert_eq!(state.regs[2], expected.regs[2]);
+        assert_eq!(state.regs[2], 102_334_155);
+    }
+
+    #[test]
+    fn jit_hot_counter_compiles_after_threshold() {
+        let p = programs::fibonacci(10);
+        let mut jit = JitEngine::new().unwrap();
+
+        for _ in 0..HOT_THRESHOLD {
+            let mut state = VMState::new(&p);
+            assert!(!jit.run_hot(&p, &mut state).unwrap());
+        }
+
+        let mut state = VMState::new(&p);
+        assert!(jit.run_hot(&p, &mut state).unwrap());
+        assert!(jit.has_compiled(&p));
+        assert_eq!(state.regs[2], 55);
+    }
+
+    #[test]
+    fn jit_cache_is_not_in_snapshot() {
+        let p = programs::fibonacci(10);
+        let store = ProgramStore::new();
+        store.add(p.clone());
+
+        let mut jit = JitEngine::new().unwrap();
+        jit.compile(&p).unwrap();
+        assert!(jit.has_compiled(&p));
+
+        let state = VMState::new(&p);
+        let snap = Snapshot::capture(&state);
+        let restored = snap.restore(&store).unwrap();
+        let fresh_jit = JitEngine::new().unwrap();
+
+        assert_eq!(restored.program_id(), p.id());
+        assert!(!fresh_jit.has_compiled(&p));
     }
 
     // ── Program identity ──────────────────────────────────────────────────────
