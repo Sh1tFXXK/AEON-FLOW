@@ -1,5 +1,6 @@
 use crate::inst::Inst;
 use crate::program::Program;
+use crate::vfs::VirtualFS;
 use crate::ProgramId;
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +11,9 @@ pub enum VMError {
     EmptyCallStack,
     MemoryOutOfBounds { addr: usize, heap_len: usize },
     OutOfMemory { requested: usize, available: usize },
+    UnknownSyscall(u8),
+    InvalidUtf8,
+    Fs(String),
     RuntimeError(String),
 }
 
@@ -34,6 +38,9 @@ impl std::fmt::Display for VMError {
                     requested, available
                 )
             }
+            VMError::UnknownSyscall(num) => write!(f, "unknown syscall: {}", num),
+            VMError::InvalidUtf8 => write!(f, "invalid utf-8"),
+            VMError::Fs(err) => write!(f, "filesystem error: {}", err),
             VMError::RuntimeError(s) => write!(f, "runtime error: {}", s),
         }
     }
@@ -55,6 +62,7 @@ pub struct VMState {
     pub steps: usize,
     pub heap: Vec<u8>,
     pub heap_top: usize,
+    pub vfs: VirtualFS,
 }
 
 impl VMState {
@@ -67,6 +75,7 @@ impl VMState {
             steps: 0,
             heap: vec![0; DEFAULT_HEAP_SIZE],
             heap_top: 0,
+            vfs: VirtualFS::default(),
         }
     }
 
@@ -166,6 +175,12 @@ impl VMState {
                 self.heap_top = next_top;
                 self.pc += 1;
             }
+            Inst::Syscall { num } => {
+                if let Err(err) = self.handle_syscall(*num) {
+                    return StepResult::Error(err);
+                }
+                self.pc += 1;
+            }
             Inst::Halt => return StepResult::Halted,
         }
         self.steps += 1;
@@ -210,5 +225,82 @@ impl VMState {
             });
         }
         Ok(addr)
+    }
+
+    fn handle_syscall(&mut self, num: u8) -> Result<(), VMError> {
+        match num {
+            0 => {
+                let path_addr = self.reg_usize(1)?;
+                let path_len = self.reg_usize(2)?;
+                let writable = self.regs[3] != 0;
+                let path = std::str::from_utf8(self.checked_heap_range(path_addr, path_len)?)
+                    .map_err(|_| VMError::InvalidUtf8)?
+                    .to_string();
+                let fd = self
+                    .vfs
+                    .open(&path, writable)
+                    .map_err(|err| VMError::Fs(err.to_string()))?;
+                self.regs[0] = fd as u64;
+                Ok(())
+            }
+            1 => {
+                let fd = self.reg_usize(1)?;
+                let buf_addr = self.reg_usize(2)?;
+                let count = self.reg_usize(3)?;
+                self.checked_heap_range(buf_addr, count)?;
+                let mut buf = vec![0; count];
+                let read = self
+                    .vfs
+                    .read(fd, &mut buf)
+                    .map_err(|err| VMError::Fs(err.to_string()))?;
+                self.heap[buf_addr..buf_addr + read].copy_from_slice(&buf[..read]);
+                self.regs[0] = read as u64;
+                Ok(())
+            }
+            2 => {
+                let fd = self.reg_usize(1)?;
+                let buf_addr = self.reg_usize(2)?;
+                let count = self.reg_usize(3)?;
+                let data = self.checked_heap_range(buf_addr, count)?.to_vec();
+                let written = self
+                    .vfs
+                    .write(fd, &data)
+                    .map_err(|err| VMError::Fs(err.to_string()))?;
+                self.regs[0] = written as u64;
+                Ok(())
+            }
+            3 => {
+                let fd = self.reg_usize(1)?;
+                self.vfs
+                    .close(fd)
+                    .map_err(|err| VMError::Fs(err.to_string()))?;
+                self.regs[0] = 0;
+                Ok(())
+            }
+            other => Err(VMError::UnknownSyscall(other)),
+        }
+    }
+
+    fn checked_heap_range(&self, addr: usize, len: usize) -> Result<&[u8], VMError> {
+        let Some(end) = addr.checked_add(len) else {
+            return Err(VMError::MemoryOutOfBounds {
+                addr,
+                heap_len: self.heap.len(),
+            });
+        };
+        if end > self.heap.len() {
+            return Err(VMError::MemoryOutOfBounds {
+                addr: end,
+                heap_len: self.heap.len(),
+            });
+        }
+        Ok(&self.heap[addr..end])
+    }
+
+    fn reg_usize(&self, reg: u8) -> Result<usize, VMError> {
+        usize::try_from(self.regs[reg as usize]).map_err(|_| VMError::MemoryOutOfBounds {
+            addr: usize::MAX,
+            heap_len: self.heap.len(),
+        })
     }
 }

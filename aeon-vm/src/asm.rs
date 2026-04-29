@@ -20,6 +20,7 @@
 //   alloc r<dst>, r<size>     allocate heap bytes; r[dst] = start address
 //   loadmem r<dst>, r<addr>   r[dst] = heap[r[addr]]
 //   storemem r<addr>, r<src>  heap[r[addr]] = r[src] as u8
+//   syscall <num>             call VM service with register arguments
 //   halt                      stop
 //
 // Example (fibonacci.asm):
@@ -232,6 +233,16 @@ impl Assembler {
                 let src = parse_reg(tokens[2], line_no)?;
                 RawInst::Resolved(Inst::StoreMem { addr, src })
             }
+            "print" => {
+                require_tokens(&tokens, 2, line_no)?;
+                let r = parse_reg(tokens[1], line_no)?;
+                RawInst::Resolved(Inst::Print { r })
+            }
+            "syscall" => {
+                require_tokens(&tokens, 2, line_no)?;
+                let num = parse_u8(tokens[1], line_no)?;
+                RawInst::Resolved(Inst::Syscall { num })
+            }
             "halt" => RawInst::Resolved(Inst::Halt),
 
             _ => {
@@ -295,6 +306,14 @@ fn parse_u64(s: &str, line: usize) -> Result<u64, AsmError> {
     parsed.map_err(|_| AsmError {
         line,
         message: format!("expected number, got '{}'", s),
+    })
+}
+
+fn parse_u8(s: &str, line: usize) -> Result<u8, AsmError> {
+    let value = parse_u64(s, line)?;
+    u8::try_from(value).map_err(|_| AsmError {
+        line,
+        message: format!("expected u8, got '{}'", s),
     })
 }
 

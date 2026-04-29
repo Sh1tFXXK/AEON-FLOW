@@ -1,4 +1,5 @@
 use crate::store::ProgramStore;
+use crate::vfs::VirtualFS;
 use crate::vm::{VMState, DEFAULT_HEAP_SIZE};
 use crate::ProgramId;
 use bincode;
@@ -15,6 +16,7 @@ pub struct Snapshot {
     pub steps: usize,
     pub heap: Option<Vec<u8>>,
     pub heap_top: Option<usize>,
+    pub vfs: VirtualFS,
 }
 
 impl Snapshot {
@@ -30,6 +32,7 @@ impl Snapshot {
             steps: vm.steps,
             heap: Some(vm.heap.clone()),
             heap_top: Some(vm.heap_top),
+            vfs: vm.vfs.clone(),
         }
     }
 
@@ -81,6 +84,7 @@ impl Snapshot {
             vm.steps = self.steps;
             vm.heap = self.heap.clone().unwrap_or_else(default_heap);
             vm.heap_top = self.heap_top.unwrap_or(0);
+            vm.vfs = self.vfs.clone();
             if vm.heap_top > vm.heap.len() {
                 return Err(format!(
                     "heap_top {} exceeds heap length {}",

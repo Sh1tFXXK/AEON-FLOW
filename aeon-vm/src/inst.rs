@@ -16,6 +16,7 @@ pub enum Inst {
     StoreMem { addr: u8, src: u8 },
     Alloc { dst: u8, size: u8 },
     Halt,
+    Syscall { num: u8 },
 }
 
 impl Inst {
@@ -35,6 +36,7 @@ impl Inst {
             Inst::StoreMem { addr, src } => format!("storemem r{}, r{}", addr, src),
             Inst::Alloc { dst, size } => format!("alloc r{}, r{}", dst, size),
             Inst::Halt => "halt".to_string(),
+            Inst::Syscall { num } => format!("syscall {}", num),
         }
     }
 }

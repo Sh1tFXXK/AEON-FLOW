@@ -1,6 +1,6 @@
 # AEON VM ISA
 
-This document covers the 13 assembler-supported instructions. Registers are `r0` through `r255`. Immediates may be decimal (`42`) or hexadecimal (`0x2a`). Label jumps are resolved by the assembler.
+This document covers the assembler-supported instructions. Registers are `r0` through `r255`. Immediates may be decimal (`42`) or hexadecimal (`0x2a`). Label jumps are resolved by the assembler.
 
 ## `load`
 
@@ -65,6 +65,13 @@ Semantics: `pc = call_stack.pop()`
 Errors: returns `VMError::EmptyCallStack` if the call stack is empty.
 Example: `ret`
 
+## `print`
+
+Syntax: `print r<src>`
+Semantics: print `regs[src]` as a decimal value.
+Errors: invalid register is rejected by the assembler.
+Example: `print r6`
+
 ## `alloc`
 
 Syntax: `alloc r<dst>, r<size>`
@@ -85,6 +92,13 @@ Syntax: `storemem r<addr>, r<src>`
 Semantics: `heap[regs[addr]] = regs[src] as u8`
 Errors: returns `VMError::MemoryOutOfBounds` if `regs[addr]` is outside the heap.
 Example: `storemem r1, r2`
+
+## `syscall`
+
+Syntax: `syscall <num>`
+Semantics: call VM service `num` with arguments in registers. `0=open`, `1=read`, `2=write`, `3=close`.
+Errors: returns `VMError::UnknownSyscall`, `VMError::InvalidUtf8`, `VMError::Fs`, or heap bounds errors depending on syscall arguments.
+Example: `syscall 2`
 
 ## `halt`
 

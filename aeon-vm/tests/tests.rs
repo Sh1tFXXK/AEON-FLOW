@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod tests {
     use aeon_vm::asm::Assembler;
+    use aeon_vm::forth::ForthPrototype;
     use aeon_vm::inst::Inst;
     use aeon_vm::program::{programs, Program};
     use aeon_vm::snapshot::Snapshot;
@@ -15,6 +16,134 @@ mod tests {
         let mut state = VMState::new(program);
         state.run(program).expect("run failed");
         state
+    }
+
+    fn append_store_bytes(
+        insts: &mut Vec<Inst>,
+        addr_reg: u8,
+        value_reg: u8,
+        one_reg: u8,
+        start_addr: u64,
+        bytes: &[u8],
+    ) {
+        insts.push(Inst::LoadImm {
+            dst: addr_reg,
+            val: start_addr,
+        });
+        for &byte in bytes {
+            insts.push(Inst::LoadImm {
+                dst: value_reg,
+                val: byte as u64,
+            });
+            insts.push(Inst::StoreMem {
+                addr: addr_reg,
+                src: value_reg,
+            });
+            insts.push(Inst::Add {
+                dst: addr_reg,
+                a: addr_reg,
+                b: one_reg,
+            });
+        }
+    }
+
+    fn vfs_roundtrip_program() -> (Program, usize, usize) {
+        let path = b"test.txt";
+        let data = b"hello";
+        let path_addr = 0;
+        let data_addr = 32;
+        let read_addr = 64;
+
+        let mut insts = vec![Inst::LoadImm { dst: 9, val: 1 }];
+        append_store_bytes(&mut insts, 7, 8, 9, path_addr, path);
+        append_store_bytes(&mut insts, 7, 8, 9, data_addr, data);
+
+        insts.extend([
+            Inst::LoadImm {
+                dst: 1,
+                val: path_addr,
+            },
+            Inst::LoadImm {
+                dst: 2,
+                val: path.len() as u64,
+            },
+            Inst::LoadImm { dst: 3, val: 1 },
+            Inst::Syscall { num: 0 },
+            Inst::Mov { dst: 4, src: 0 },
+            Inst::Mov { dst: 1, src: 4 },
+            Inst::LoadImm {
+                dst: 2,
+                val: data_addr,
+            },
+            Inst::LoadImm {
+                dst: 3,
+                val: data.len() as u64,
+            },
+            Inst::Syscall { num: 2 },
+            Inst::Mov { dst: 1, src: 4 },
+            Inst::Syscall { num: 3 },
+        ]);
+
+        let snap_after_write = insts.len();
+
+        insts.extend([
+            Inst::LoadImm {
+                dst: 1,
+                val: path_addr,
+            },
+            Inst::LoadImm {
+                dst: 2,
+                val: path.len() as u64,
+            },
+            Inst::LoadImm { dst: 3, val: 0 },
+            Inst::Syscall { num: 0 },
+            Inst::Mov { dst: 5, src: 0 },
+            Inst::Mov { dst: 1, src: 5 },
+            Inst::LoadImm {
+                dst: 2,
+                val: read_addr,
+            },
+            Inst::LoadImm {
+                dst: 3,
+                val: data.len() as u64,
+            },
+            Inst::Syscall { num: 1 },
+            Inst::Mov { dst: 6, src: 0 },
+            Inst::Mov { dst: 1, src: 5 },
+            Inst::Syscall { num: 3 },
+            Inst::LoadImm {
+                dst: 7,
+                val: read_addr,
+            },
+            Inst::LoadMem { dst: 10, addr: 7 },
+            Inst::Add { dst: 7, a: 7, b: 9 },
+            Inst::LoadMem { dst: 11, addr: 7 },
+            Inst::Add { dst: 7, a: 7, b: 9 },
+            Inst::LoadMem { dst: 12, addr: 7 },
+            Inst::Add { dst: 7, a: 7, b: 9 },
+            Inst::LoadMem { dst: 13, addr: 7 },
+            Inst::Add { dst: 7, a: 7, b: 9 },
+            Inst::LoadMem { dst: 14, addr: 7 },
+            Inst::Halt,
+        ]);
+
+        (Program::new(insts), snap_after_write, read_addr as usize)
+    }
+
+    fn forth_fib_source() -> &'static str {
+        r#"
+: fib
+  var n set n
+  0 var a set a
+  1 var b set b
+  get n 0 do
+    get b get a get b + set b set a
+  loop
+  get a
+;
+
+10 fib .
+"#
     }
 
     // ── VM instruction correctness ────────────────────────────────────────────
@@ -408,6 +537,92 @@ halt
             }
             other => panic!("expected MemoryOutOfBounds, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn vfs_write_read_roundtrip() {
+        let (program, _, read_addr) = vfs_roundtrip_program();
+        let state = run_to_completion(&program);
+
+        assert_eq!(state.regs[6], 5);
+        assert_eq!(&state.heap[read_addr..read_addr + 5], b"hello");
+        assert_eq!(
+            [
+                state.regs[10],
+                state.regs[11],
+                state.regs[12],
+                state.regs[13],
+                state.regs[14],
+            ],
+            [
+                b'h' as u64,
+                b'e' as u64,
+                b'l' as u64,
+                b'l' as u64,
+                b'o' as u64
+            ]
+        );
+    }
+
+    #[test]
+    fn vfs_survives_snapshot() {
+        let (program, snap_at, read_addr) = vfs_roundtrip_program();
+        let store = ProgramStore::new();
+        store.add(program.clone());
+
+        let mut state = VMState::new(&program);
+        let (_, halted) = state.run_bounded(&program, snap_at);
+        assert!(!halted);
+
+        let snap = Snapshot::capture(&state);
+        let mut restored = snap.restore(&store).unwrap();
+        restored.run(&program).unwrap();
+
+        assert_eq!(restored.regs[6], 5);
+        assert_eq!(&restored.heap[read_addr..read_addr + 5], b"hello");
+    }
+
+    #[test]
+    fn forth_fib10_outputs_55() {
+        let program = Program::new(vec![Inst::Halt]);
+        let mut state = VMState::new(&program);
+
+        ForthPrototype::start(&mut state, forth_fib_source()).unwrap();
+        let output = ForthPrototype::run(&mut state).unwrap();
+
+        assert_eq!(output, vec![55]);
+        assert_eq!(state.regs[200], aeon_vm::forth::STACK_BASE as u64);
+    }
+
+    #[test]
+    fn forth_state_survives_snapshot() {
+        let program = Program::new(vec![Inst::Halt]);
+        let store = ProgramStore::new();
+        store.add(program.clone());
+
+        let mut state = VMState::new(&program);
+        ForthPrototype::start(&mut state, forth_fib_source()).unwrap();
+        let halted = ForthPrototype::run_steps(&mut state, 12).unwrap();
+        assert!(!halted);
+
+        let snap = Snapshot::capture(&state);
+        let mut restored = snap.restore(&store).unwrap();
+        let output = ForthPrototype::run(&mut restored).unwrap();
+
+        assert_eq!(output, vec![55]);
+        assert_eq!(restored.regs[200], aeon_vm::forth::STACK_BASE as u64);
+    }
+
+    #[test]
+    fn forth_core_language_features() {
+        let program = Program::new(vec![Inst::Halt]);
+        let mut state = VMState::new(&program);
+        let src = "6 7 * 5 - . 0 if 99 . then 1 if 3 4 + . then";
+
+        ForthPrototype::start(&mut state, src).unwrap();
+        let output = ForthPrototype::run(&mut state).unwrap();
+
+        assert_eq!(output, vec![37, 7]);
     }
 
     // ── ProgramStore ──────────────────────────────────────────────────────────
