@@ -15,6 +15,7 @@ dependencies = [
  "cranelift-native",
  "criterion",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

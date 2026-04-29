@@ -1,4 +1,5 @@
 use aeon_vm::editor::{PatchSet, SnapshotEditor};
+use aeon_vm::eventlog::AeonEvent;
 use aeon_vm::program::programs;
 use aeon_vm::session::{ContextRegistry, Lamport, SessionId, SharedContext};
 use aeon_vm::snapshot::Snapshot;
@@ -85,6 +86,31 @@ fn apply_patch_changes_current_snapshot() {
     let current = ctx.current_snapshot().unwrap();
     assert_eq!(current.regs[0], 999);
     assert_eq!(current.regs[1], snap.regs[1]);
+}
+
+#[test]
+fn apply_patch_records_patch_event() {
+    let snap = fib_snap(5);
+    let patch = reg_patch(&snap, 0, 999, "set r0=999");
+    let mut ctx = SharedContext::new("evented", snap, alice());
+
+    ctx.apply_patch(alice(), "test patch", patch).unwrap();
+    let current = ctx.current_snapshot().unwrap();
+    let last = current.event_log.entries().last().unwrap();
+
+    assert!(matches!(
+        &last.event,
+        AeonEvent::PatchApplied {
+            context_id,
+            author,
+            description,
+            patch_count,
+        } if context_id == "evented"
+            && author == alice().display()
+            && description == "test patch"
+            && *patch_count == 1
+    ));
+    assert!(current.event_log.verify().is_ok());
 }
 
 #[test]

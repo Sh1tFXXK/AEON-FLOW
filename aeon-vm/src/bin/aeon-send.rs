@@ -1,4 +1,5 @@
 use aeon_vm::editor::PatchSet;
+use aeon_vm::eventlog::AeonEvent;
 use aeon_vm::program::Program;
 use aeon_vm::protocol::{
     parse_program_id, read_msg, write_error, write_msg, ERROR, NEED_PROGRAM, OK, PATCHSET, PROGRAM,
@@ -41,11 +42,21 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    let snapshot = Snapshot::capture(&state);
+    let mut snapshot = Snapshot::capture(&state);
     let patchset = load_patchset(&args)?;
 
     let mut stream =
         TcpStream::connect(&target).map_err(|err| format!("connect {}: {}", target, err))?;
+    let from = stream
+        .local_addr()
+        .map(|addr| addr.to_string())
+        .unwrap_or_else(|_| "sender".to_string());
+    snapshot.append_event(AeonEvent::VMMigrated {
+        program_id: program.id(),
+        from,
+        to: target.clone(),
+        steps: state.steps,
+    });
     write_msg(&mut stream, SNAPSHOT, &snapshot.to_bytes()).map_err(|err| err.to_string())?;
     write_msg(&mut stream, PATCHSET, &patchset.to_bytes()).map_err(|err| err.to_string())?;
 

@@ -142,7 +142,11 @@ impl ForthPrototype {
         let mut addr = STACK_BASE;
         while addr < ptr {
             let mut bytes = [0u8; 8];
-            bytes.copy_from_slice(&vm.heap[addr..addr + 8]);
+            bytes.copy_from_slice(
+                &vm.heap
+                    .read(addr, 8)
+                    .map_err(|err| ForthError::BadControl(err))?,
+            );
             values.push(u64::from_le_bytes(bytes));
             addr += 8;
         }
@@ -465,7 +469,9 @@ fn push(vm: &mut VMState, value: u64) -> Result<(), ForthError> {
     if ptr < STACK_BASE || end > STACK_LIMIT || end > vm.heap.len() {
         return Err(ForthError::StackOverflow);
     }
-    vm.heap[ptr..end].copy_from_slice(&value.to_le_bytes());
+    vm.heap
+        .write(ptr, &value.to_le_bytes())
+        .map_err(|_| ForthError::StackOverflow)?;
     vm.regs[STACK_REG] = end as u64;
     Ok(())
 }
@@ -477,7 +483,11 @@ fn pop(vm: &mut VMState) -> Result<u64, ForthError> {
     }
     let start = ptr - 8;
     let mut bytes = [0u8; 8];
-    bytes.copy_from_slice(&vm.heap[start..ptr]);
+    bytes.copy_from_slice(
+        &vm.heap
+            .read(start, 8)
+            .map_err(|err| ForthError::BadControl(err))?,
+    );
     vm.regs[STACK_REG] = start as u64;
     Ok(u64::from_le_bytes(bytes))
 }

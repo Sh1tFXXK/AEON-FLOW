@@ -23,8 +23,17 @@ path = "src/bin/aeon-send.rs"
 name = "aeon-forth"
 path = "src/bin/aeon-forth.rs"
 
+[[bin]]
+name = "aeon"
+path = "src/bin/aeon.rs"
+
+[[bin]]
+name = "aeon-daemon"
+path = "src/bin/aeon-daemon.rs"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 bincode = "1.3"
 blake3 = "1.5"
 cranelift = "0.109"

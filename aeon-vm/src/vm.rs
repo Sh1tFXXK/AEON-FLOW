@@ -1,6 +1,8 @@
+use crate::cowheap::COWHeap;
 use crate::inst::Inst;
 use crate::program::Program;
 use crate::vfs::VirtualFS;
+use crate::EventLog;
 use crate::ProgramId;
 use serde::{Deserialize, Serialize};
 
@@ -60,9 +62,10 @@ pub struct VMState {
     pub pc: usize,
     pub call_stack: Vec<usize>,
     pub steps: usize,
-    pub heap: Vec<u8>,
+    pub heap: COWHeap,
     pub heap_top: usize,
     pub vfs: VirtualFS,
+    pub event_log: EventLog,
 }
 
 impl VMState {
@@ -73,9 +76,10 @@ impl VMState {
             pc: 0,
             call_stack: Vec::new(),
             steps: 0,
-            heap: vec![0; DEFAULT_HEAP_SIZE],
+            heap: COWHeap::new(DEFAULT_HEAP_SIZE),
             heap_top: 0,
             vfs: VirtualFS::default(),
+            event_log: EventLog::default(),
         }
     }
 
@@ -138,7 +142,15 @@ impl VMState {
                     Ok(addr) => addr,
                     Err(err) => return StepResult::Error(err),
                 };
-                self.regs[*dst as usize] = self.heap[addr] as u64;
+                self.regs[*dst as usize] = match self.heap.get(addr) {
+                    Ok(byte) => byte as u64,
+                    Err(_) => {
+                        return StepResult::Error(VMError::MemoryOutOfBounds {
+                            addr,
+                            heap_len: self.heap.len(),
+                        });
+                    }
+                };
                 self.pc += 1;
             }
             Inst::StoreMem { addr, src } => {
@@ -146,7 +158,12 @@ impl VMState {
                     Ok(addr) => addr,
                     Err(err) => return StepResult::Error(err),
                 };
-                self.heap[addr] = self.regs[*src as usize] as u8;
+                if self.heap.set(addr, self.regs[*src as usize] as u8).is_err() {
+                    return StepResult::Error(VMError::MemoryOutOfBounds {
+                        addr,
+                        heap_len: self.heap.len(),
+                    });
+                }
                 self.pc += 1;
             }
             Inst::Alloc { dst, size } => {
@@ -233,7 +250,8 @@ impl VMState {
                 let path_addr = self.reg_usize(1)?;
                 let path_len = self.reg_usize(2)?;
                 let writable = self.regs[3] != 0;
-                let path = std::str::from_utf8(self.checked_heap_range(path_addr, path_len)?)
+                let path_bytes = self.checked_heap_range(path_addr, path_len)?;
+                let path = std::str::from_utf8(&path_bytes)
                     .map_err(|_| VMError::InvalidUtf8)?
                     .to_string();
                 let fd = self
@@ -253,7 +271,12 @@ impl VMState {
                     .vfs
                     .read(fd, &mut buf)
                     .map_err(|err| VMError::Fs(err.to_string()))?;
-                self.heap[buf_addr..buf_addr + read].copy_from_slice(&buf[..read]);
+                self.heap.write(buf_addr, &buf[..read]).map_err(|_| {
+                    VMError::MemoryOutOfBounds {
+                        addr: buf_addr + read,
+                        heap_len: self.heap.len(),
+                    }
+                })?;
                 self.regs[0] = read as u64;
                 Ok(())
             }
@@ -261,7 +284,7 @@ impl VMState {
                 let fd = self.reg_usize(1)?;
                 let buf_addr = self.reg_usize(2)?;
                 let count = self.reg_usize(3)?;
-                let data = self.checked_heap_range(buf_addr, count)?.to_vec();
+                let data = self.checked_heap_range(buf_addr, count)?;
                 let written = self
                     .vfs
                     .write(fd, &data)
@@ -281,7 +304,7 @@ impl VMState {
         }
     }
 
-    fn checked_heap_range(&self, addr: usize, len: usize) -> Result<&[u8], VMError> {
+    fn checked_heap_range(&self, addr: usize, len: usize) -> Result<Vec<u8>, VMError> {
         let Some(end) = addr.checked_add(len) else {
             return Err(VMError::MemoryOutOfBounds {
                 addr,
@@ -294,7 +317,12 @@ impl VMState {
                 heap_len: self.heap.len(),
             });
         }
-        Ok(&self.heap[addr..end])
+        self.heap
+            .read(addr, len)
+            .map_err(|_| VMError::MemoryOutOfBounds {
+                addr: end,
+                heap_len: self.heap.len(),
+            })
     }
 
     fn reg_usize(&self, reg: u8) -> Result<usize, VMError> {

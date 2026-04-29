@@ -4,6 +4,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::editor::PatchSet;
+use crate::eventlog::AeonEvent;
 use crate::snapshot::Snapshot;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -117,6 +118,15 @@ impl SharedContext {
                 .patchset
                 .apply(&snap)
                 .map_err(|err| format!("patch by {} failed: {}", patch.author, err))?;
+            snap.event_log.append_at(
+                AeonEvent::PatchApplied {
+                    context_id: self.id.clone(),
+                    author: patch.author.display().to_string(),
+                    description: patch.message.clone(),
+                    patch_count: patch.patchset.len(),
+                },
+                patch.wall_ms,
+            );
         }
         Ok(snap)
     }

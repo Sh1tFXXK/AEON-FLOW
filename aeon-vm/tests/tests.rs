@@ -3,11 +3,15 @@
 #[cfg(test)]
 mod tests {
     use aeon_vm::asm::Assembler;
+    use aeon_vm::cowheap::{COWHeap, PAGE_SIZE};
+    use aeon_vm::daemon::{handle_json_request, DaemonState};
+    use aeon_vm::eventlog::{AeonEvent, EventLog};
     use aeon_vm::forth::ForthPrototype;
     use aeon_vm::inst::Inst;
     use aeon_vm::jit::{JitEngine, HOT_THRESHOLD};
+    use aeon_vm::p2p::{missing_events, EventBloom, EventGSet};
     use aeon_vm::program::{programs, Program};
-    use aeon_vm::snapshot::Snapshot;
+    use aeon_vm::snapshot::{Snapshot, SnapshotDelta};
     use aeon_vm::store::ProgramStore;
     use aeon_vm::vm::{StepResult, VMError, VMState};
 
@@ -479,6 +483,100 @@ mod tests {
     }
 
     #[test]
+    fn event_log_hash_chain_detects_tamper() {
+        let mut log = EventLog::default();
+        log.append(AeonEvent::Checkpoint {
+            program_id: [1; 32],
+            pc: 3,
+            steps: 7,
+        });
+        log.append(AeonEvent::VMMigrated {
+            program_id: [1; 32],
+            from: "laptop".into(),
+            to: "desktop".into(),
+            steps: 7,
+        });
+        assert!(log.verify().is_ok());
+
+        log.entries_mut()[1].prev_hash = [9; 32];
+        assert!(log.verify().is_err());
+    }
+
+    #[test]
+    fn event_gset_merge_is_union() {
+        let mut a = EventGSet::default();
+        let mut b = EventGSet::default();
+        a.insert([1; 32]);
+        b.insert([2; 32]);
+
+        a.merge(&b);
+        b.merge(&a);
+
+        assert_eq!(a.len(), 2);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn heartbeat_bloom_finds_missing_events_in_both_directions() {
+        let mut a_log = EventLog::default();
+        a_log.append(AeonEvent::Checkpoint {
+            program_id: [1; 32],
+            pc: 1,
+            steps: 1,
+        });
+        a_log.append(AeonEvent::VMMigrated {
+            program_id: [1; 32],
+            from: "alice".into(),
+            to: "bob".into(),
+            steps: 1,
+        });
+
+        let mut b_log = EventLog::default();
+        b_log.append(AeonEvent::Checkpoint {
+            program_id: [2; 32],
+            pc: 2,
+            steps: 2,
+        });
+
+        let a_bloom = EventBloom::from_gset(&EventGSet::from_log(&a_log));
+        let b_bloom = EventBloom::from_gset(&EventGSet::from_log(&b_log));
+        let a_needs = missing_events(&b_log, &a_bloom);
+        let b_needs = missing_events(&a_log, &b_bloom);
+
+        let mut a_known = EventGSet::from_log(&a_log);
+        let mut b_known = EventGSet::from_log(&b_log);
+        a_known.merge(&EventGSet::from_entries(&a_needs));
+        b_known.merge(&EventGSet::from_entries(&b_needs));
+
+        assert_eq!(a_needs.len(), 1);
+        assert_eq!(b_needs.len(), 2);
+        assert_eq!(a_known, b_known);
+        assert_eq!(a_known.len(), 3);
+    }
+
+    #[test]
+    fn snapshot_capture_appends_checkpoint_event() {
+        let p = programs::fibonacci(5);
+        let mut state = VMState::new(&p);
+        state.run_bounded(&p, 3);
+
+        let snap = Snapshot::capture(&state);
+        let events = snap.event_log.entries();
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0].event,
+            AeonEvent::Checkpoint {
+                pc: 3,
+                steps: 3,
+                ..
+            }
+        ));
+        assert!(snap.event_log.verify().is_ok());
+        assert!(state.event_log.entries().is_empty());
+    }
+
+    #[test]
     fn snapshot_serialization_roundtrip() {
         let p = programs::fibonacci(10);
         let store = ProgramStore::new();
@@ -502,7 +600,7 @@ mod tests {
         let state = VMState::new(&p);
         let snap = Snapshot::capture(&state);
 
-        assert_eq!(snap.format_version, 1);
+        assert_eq!(snap.format_version, Snapshot::CURRENT_VERSION);
     }
 
     #[test]
@@ -547,7 +645,7 @@ halt
 
         assert_eq!(state.regs[1], 0);
         assert_eq!(state.regs[3], 42);
-        assert_eq!(state.heap[0], 42);
+        assert_eq!(state.heap.get(0).unwrap(), 42);
         assert_eq!(state.heap_top, 10);
     }
 
@@ -570,9 +668,101 @@ halt
         let mut restored = snap.restore(&store).unwrap();
         restored.run(&p).unwrap();
 
-        assert_eq!(restored.heap[0], 42);
+        assert_eq!(restored.heap.get(0).unwrap(), 42);
         assert_eq!(restored.heap_top, 10);
         assert_eq!(restored.regs[3], 42);
+    }
+
+    #[test]
+    fn cow_heap_tracks_dirty_pages() {
+        let mut heap = COWHeap::new(PAGE_SIZE * 3);
+        heap.set(0, 1).unwrap();
+        heap.set(PAGE_SIZE + 4, 2).unwrap();
+
+        assert_eq!(heap.get(0).unwrap(), 1);
+        assert_eq!(heap.get(PAGE_SIZE + 4).unwrap(), 2);
+        assert_eq!(heap.dirty_page_indices(), vec![0, 1]);
+    }
+
+    #[test]
+    fn incremental_snapshot_applies_dirty_pages_to_base() {
+        let p = programs::fibonacci(5);
+        let base_state = VMState::new(&p);
+        let base = Snapshot::capture(&base_state);
+        let mut changed = base_state.clone();
+        changed.heap.write(PAGE_SIZE, b"hello").unwrap();
+        changed.heap_top = PAGE_SIZE + 5;
+
+        let delta = SnapshotDelta::capture(&changed);
+        let patched = delta.apply_to(&base).unwrap();
+
+        assert_eq!(delta.dirty_pages.len(), 1);
+        assert_eq!(
+            &patched.heap.as_ref().unwrap()[PAGE_SIZE..PAGE_SIZE + 5],
+            b"hello"
+        );
+        assert_eq!(patched.heap_top, Some(PAGE_SIZE + 5));
+    }
+
+    #[test]
+    fn incremental_snapshot_size_tracks_dirty_pages() {
+        let p = programs::fibonacci(5);
+        let mut state = VMState::new(&p);
+        state.heap.write(0, &vec![7; 10 * 1024]).unwrap();
+
+        let full_size = Snapshot::capture(&state).to_bytes().len();
+        let delta_size = SnapshotDelta::capture(&state).to_bytes().len();
+
+        assert!(full_size > 1024 * 1024);
+        assert!(
+            delta_size < 20 * 1024,
+            "delta snapshot should be around dirty data size, got {} bytes",
+            delta_size
+        );
+    }
+
+    #[test]
+    fn daemon_state_runs_resumes_and_recovers_vm() {
+        let dir = std::env::temp_dir().join(format!(
+            "aeon-daemon-test-{}-{}",
+            std::process::id(),
+            "state"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let program_path = dir.join("fib.aeon");
+        programs::fibonacci(5).save(&program_path).unwrap();
+
+        let mut daemon = DaemonState::new(dir.clone()).unwrap();
+        let id = daemon.run_program(&program_path).unwrap();
+        assert_eq!(daemon.ps().len(), 1);
+        daemon.pause(&id).unwrap();
+        daemon.resume(&id).unwrap();
+
+        let lines = daemon.log(&id).unwrap();
+        assert!(lines.iter().any(|line| line.contains("Checkpoint")));
+
+        let recovered = DaemonState::recover(dir.clone()).unwrap();
+        assert_eq!(recovered.ps().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn daemon_json_protocol_handles_devices() {
+        let dir = std::env::temp_dir().join(format!(
+            "aeon-daemon-test-{}-{}",
+            std::process::id(),
+            "json"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut daemon = DaemonState::new(dir.clone()).unwrap();
+        let response = handle_json_request(&mut daemon, r#"{"cmd":"devices","args":[]}"#).unwrap();
+
+        assert!(response.contains(r#""ok":true"#));
+        assert!(response.contains("local"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -603,7 +793,7 @@ halt
         let state = run_to_completion(&program);
 
         assert_eq!(state.regs[6], 5);
-        assert_eq!(&state.heap[read_addr..read_addr + 5], b"hello");
+        assert_eq!(state.heap.read(read_addr, 5).unwrap(), b"hello");
         assert_eq!(
             [
                 state.regs[10],
@@ -637,7 +827,7 @@ halt
         restored.run(&program).unwrap();
 
         assert_eq!(restored.regs[6], 5);
-        assert_eq!(&restored.heap[read_addr..read_addr + 5], b"hello");
+        assert_eq!(restored.heap.read(read_addr, 5).unwrap(), b"hello");
     }
 
     #[test]

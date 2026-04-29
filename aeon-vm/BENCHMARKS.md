@@ -1,7 +1,8 @@
 # Benchmarks
 
 Baseline captured before Step 10 JIT or snapshot optimizations. Step 10b adds
-Cranelift JIT measurements for the hot `fib(40)` path.
+Cranelift JIT measurements for the hot `fib(40)` path. Step 13 adds COW heap
+and incremental snapshot measurements for 10KB of dirty heap data.
 
 Environment:
 
@@ -12,11 +13,13 @@ Environment:
 
 | Benchmark | Before | After | Notes |
 | --- | ---: | ---: | --- |
-| `fib20_interpreter` | 2.4608 us | 2.9527 us | `programs::fibonacci(20)` through `VMState::run` |
-| `snapshot_capture_1mb_heap` | 61.753 us | 65.235 us | `Snapshot::capture` clones 1MB heap |
-| `snapshot_restore_1mb_heap` | 95.506 us | 102.40 us | Restore from snapshot through `ProgramStore` |
-| `fib40_interpreter` | 1.2422 us | 1.2422 us | Execution-only run, VMState reused and reset |
-| `fib40_jit_compiled` | 1.2422 us | 65.841 ns | Cached Cranelift machine code, 18.9x faster |
+| `fib20_interpreter` | 2.4608 us | 2.7533 us | `programs::fibonacci(20)` through `VMState::run` |
+| `snapshot_capture_1mb_heap` | 61.753 us | 61.112 us | Full snapshot still serializes 1MB heap |
+| `snapshot_restore_1mb_heap` | 95.506 us | 180.33 us | Restore now rebuilds COW pages |
+| `snapshot_delta_capture_10kb_dirty` | n/a | 864.66 ns | Captures only dirty COW pages |
+| `snapshot_delta_apply_10kb_dirty` | n/a | 141.98 us | Applies dirty pages to base snapshot |
+| `fib40_interpreter` | 1.1726 us | 1.1726 us | Execution-only run, VMState reused and reset |
+| `fib40_jit_compiled` | 1.1726 us | 57.520 ns | Cached Cranelift machine code, 20.4x faster |
 
 Before raw Criterion ranges:
 
@@ -31,3 +34,18 @@ Step 10b raw Criterion ranges:
 - `snapshot_restore_1mb_heap`: [100.79 us, 102.40 us, 104.15 us]
 - `fib40_interpreter`: [1.2298 us, 1.2422 us, 1.2540 us]
 - `fib40_jit_compiled`: [65.292 ns, 65.841 ns, 66.434 ns]
+
+Step 13 raw Criterion ranges:
+
+- `fib20_interpreter`: [2.5896 us, 2.7533 us, 2.9084 us]
+- `snapshot_capture_1mb_heap`: [60.935 us, 61.112 us, 61.299 us]
+- `snapshot_restore_1mb_heap`: [179.58 us, 180.33 us, 181.03 us]
+- `snapshot_delta_capture_10kb_dirty`: [861.60 ns, 864.66 ns, 868.00 ns]
+- `snapshot_delta_apply_10kb_dirty`: [141.35 us, 141.98 us, 142.70 us]
+- `fib40_interpreter`: [1.1655 us, 1.1726 us, 1.1802 us]
+- `fib40_jit_compiled`: [57.297 ns, 57.520 ns, 57.755 ns]
+
+Step 13 transfer-size check:
+
+- `incremental_snapshot_size_tracks_dirty_pages` modifies 10KB and asserts the
+  serialized delta is under 20KB, while the full snapshot remains over 1MB.

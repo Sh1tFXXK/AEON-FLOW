@@ -2,10 +2,14 @@
 
 pub mod asm;
 pub mod console;
+pub mod cowheap;
+pub mod daemon;
 pub mod editor;
+pub mod eventlog;
 pub mod forth;
 pub mod inst;
 pub mod jit;
+pub mod p2p;
 pub mod program;
 pub mod protocol;
 pub mod session;
@@ -16,6 +20,7 @@ pub mod vm;
 
 // Re-export core types
 pub use asm::Assembler;
+pub use eventlog::{AeonEvent, EventLog};
 pub use forth::ForthPrototype;
 pub use inst::Inst;
 pub use jit::JitEngine;

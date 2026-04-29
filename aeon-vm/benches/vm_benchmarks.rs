@@ -1,4 +1,5 @@
 use aeon_vm::program::programs;
+use aeon_vm::snapshot::SnapshotDelta;
 use aeon_vm::{JitEngine, ProgramStore, Snapshot, VMState};
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 
@@ -30,6 +31,29 @@ fn bench_snapshot_restore(c: &mut Criterion) {
 
     c.bench_function("snapshot_restore_1mb_heap", |b| {
         b.iter(|| black_box(snapshot.restore(black_box(&store)).unwrap()))
+    });
+}
+
+fn bench_snapshot_delta_capture(c: &mut Criterion) {
+    let program = programs::fibonacci(20);
+    let mut state = VMState::new(&program);
+    state.heap.write(0, &vec![7; 10 * 1024]).unwrap();
+
+    c.bench_function("snapshot_delta_capture_10kb_dirty", |b| {
+        b.iter(|| black_box(SnapshotDelta::capture(black_box(&state))))
+    });
+}
+
+fn bench_snapshot_delta_apply(c: &mut Criterion) {
+    let program = programs::fibonacci(20);
+    let base_state = VMState::new(&program);
+    let base = Snapshot::capture(&base_state);
+    let mut state = base_state.clone();
+    state.heap.write(0, &vec![7; 10 * 1024]).unwrap();
+    let delta = SnapshotDelta::capture(&state);
+
+    c.bench_function("snapshot_delta_apply_10kb_dirty", |b| {
+        b.iter(|| black_box(delta.apply_to(black_box(&base)).unwrap()))
     });
 }
 
@@ -75,6 +99,8 @@ criterion_group!(
     bench_fib20_interpreter,
     bench_snapshot_capture,
     bench_snapshot_restore,
+    bench_snapshot_delta_capture,
+    bench_snapshot_delta_apply,
     bench_fib40_interpreter,
     bench_fib40_jit_compiled
 );
