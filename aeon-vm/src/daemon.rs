@@ -64,11 +64,13 @@ impl DaemonState {
         let bytes = std::fs::read(&manifest_path)
             .map_err(|err| format!("read {}: {}", manifest_path.display(), err))?;
         let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
-        Ok(DaemonState {
+        let state = DaemonState {
             state_dir,
             next_id: manifest.next_id,
             vms: manifest.vms,
-        })
+        };
+        state.append_daemon_restart_events()?;
+        Ok(state)
     }
 
     pub fn run_program(&mut self, program_path: &Path) -> Result<String, String> {
@@ -187,6 +189,20 @@ impl DaemonState {
         let bytes = serde_json::to_vec_pretty(&manifest).map_err(|err| err.to_string())?;
         std::fs::write(self.state_dir.join("daemon_state.json"), bytes)
             .map_err(|err| err.to_string())
+    }
+
+    fn append_daemon_restart_events(&self) -> Result<(), String> {
+        for record in self.vms.values() {
+            let path = Path::new(&record.snapshot_path);
+            let mut snap = Snapshot::load(path)
+                .map_err(|err| format!("load snapshot {}: {}", record.snapshot_path, err))?;
+            snap.append_event(AeonEvent::DaemonRestart {
+                vm_id: record.id.clone(),
+            });
+            snap.save(path)
+                .map_err(|err| format!("save snapshot {}: {}", record.snapshot_path, err))?;
+        }
+        Ok(())
     }
 }
 

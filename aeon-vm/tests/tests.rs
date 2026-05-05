@@ -744,6 +744,14 @@ halt
 
         let recovered = DaemonState::recover(dir.clone()).unwrap();
         assert_eq!(recovered.ps().len(), 1);
+        let recovered_lines = recovered.log(&id).unwrap();
+        assert!(
+            recovered_lines
+                .iter()
+                .any(|line| line.contains("DaemonRestart")),
+            "restart should be recorded in event log: {:?}",
+            recovered_lines
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

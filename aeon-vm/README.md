@@ -25,8 +25,8 @@ aeon-run fibonacci.aeon
 # r2 = 55
 
 # 4. 暂停并迁移（两个终端）
-aeon-recv --session alice@laptop/conv-1 --port 9999
-aeon-send fibonacci.aeon --snap-at 5 --to 127.0.0.1:9999
+aeon-recv --session alice@laptop/conv-1   # 终端 1
+aeon-send fibonacci.aeon --snap-at 5 --to 127.0.0.1:9999  # 终端 2
 
 # 5. 在控制台里修改后继续
 aeon> set reg 0 3
@@ -38,36 +38,19 @@ aeon> resume
 
 ```bash
 # Alice
-aeon> set reg 0 5
-aeon> say 我把倒计时改成5了
 aeon> share collab-1
 
 # Bob
-aeon-console --session bob@desktop/conv-2 --load fibonacci.snap
 aeon> join collab-1
-aeon> history
+aeon> history       # 看到 Alice 的操作
 aeon> set reg 1 99
-aeon> resume
-```
-
-## Daemon
-
-```bash
-aeon-daemon
-aeon run fibonacci.aeon
-aeon ps
-aeon log vm-1
-aeon resume vm-1
+aeon> resume        # 两人改动合并生效
 ```
 
 ## 指令集
 
-见 `aeon-vm/docs/ISA.md`。
-
-## 架构
-
-见 `aeon-vm/docs/ARCHITECTURE.md`。
+见 docs/ISA.md
 
 ## 已知限制
 
-见 `aeon-vm/KNOWN_LIMITATIONS.md`。
+见 KNOWN_LIMITATIONS.md

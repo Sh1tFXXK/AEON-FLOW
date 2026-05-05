@@ -21,6 +21,9 @@ pub enum AeonEvent {
         description: String,
         patch_count: usize,
     },
+    DaemonRestart {
+        vm_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

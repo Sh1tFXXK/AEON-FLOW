@@ -1,4 +1,6 @@
+use std::fs;
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use crate::editor::{Inspector, SnapshotEditor};
@@ -73,6 +75,8 @@ impl FlowConsole {
                     let text = line.split_once(' ').map(|(_, text)| text).unwrap_or("");
                     self.ctx_write().post_message(self.session.clone(), text);
                 }
+                "share" => self.cmd_share(&parts[1..]),
+                "join" => self.cmd_join(&parts[1..]),
                 "sessions" => self.print_sessions(),
                 "resume" => return ConsoleResult::Resume(self.current_snapshot()),
                 "discard" => return ConsoleResult::Discard(self.base_snapshot()),
@@ -137,6 +141,82 @@ impl FlowConsole {
         }
     }
 
+    fn cmd_share(&self, args: &[&str]) {
+        let Some(context_id) = args.first() else {
+            println!("usage: share <context-id>");
+            return;
+        };
+        let path = context_path(context_id);
+        let bytes = self.ctx_read().to_bytes();
+        match fs::write(&path, bytes) {
+            Ok(()) => println!("shared context saved to {}", path.display()),
+            Err(err) => println!("error saving context: {}", err),
+        }
+    }
+
+    fn cmd_join(&self, args: &[&str]) {
+        let Some(context_id) = args.first() else {
+            println!("usage: join <context-id|file.ctx>");
+            return;
+        };
+        let path = context_path(context_id);
+        let data = match fs::read(&path) {
+            Ok(data) => data,
+            Err(err) => {
+                println!("error reading {}: {}", path.display(), err);
+                return;
+            }
+        };
+        let foreign = match SharedContext::from_bytes(&data) {
+            Ok(ctx) => ctx,
+            Err(err) => {
+                println!("error parsing context: {}", err);
+                return;
+            }
+        };
+
+        let mut current = self.ctx_write();
+        if foreign.base_snapshot.program_id() != current.base_snapshot.program_id() {
+            println!("error: context ProgramId does not match current snapshot");
+            return;
+        }
+
+        let mut added_patches = 0;
+        for patch in foreign.patches {
+            let exists = current
+                .patches
+                .iter()
+                .any(|item| item.clock == patch.clock && item.author == patch.author);
+            if !exists {
+                current.patches.push(patch);
+                added_patches += 1;
+            }
+        }
+
+        let mut added_messages = 0;
+        for message in foreign.messages {
+            let exists = current
+                .messages
+                .iter()
+                .any(|item| item.clock == message.clock && item.author == message.author);
+            if !exists {
+                current.messages.push(message);
+                added_messages += 1;
+            }
+        }
+
+        for session in foreign.connected_sessions {
+            current.join(session);
+        }
+
+        println!(
+            "joined {} ({} patch(es), {} message(s))",
+            path.display(),
+            added_patches,
+            added_messages
+        );
+    }
+
     fn ctx_read(&self) -> std::sync::RwLockReadGuard<'_, SharedContext> {
         self.context.read().unwrap()
     }
@@ -168,7 +248,17 @@ impl FlowConsole {
     fn print_help(&self) {
         println!("info | regs [start] [end] | heap [addr] [len] | diff | history | sessions");
         println!("set reg <n> <val> | set pc <val>");
-        println!("say <message> | resume | discard | quit");
+        println!("say <message> | share <context-id> | join <context-id|file.ctx>");
+        println!("resume | discard | quit");
+    }
+}
+
+fn context_path(value: &str) -> PathBuf {
+    let path = Path::new(value);
+    if path.extension().and_then(|ext| ext.to_str()) == Some("ctx") {
+        path.to_path_buf()
+    } else {
+        PathBuf::from(format!("{}.ctx", value))
     }
 }
 

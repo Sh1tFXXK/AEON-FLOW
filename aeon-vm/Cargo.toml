@@ -31,6 +31,10 @@ path = "src/bin/aeon.rs"
 name = "aeon-daemon"
 path = "src/bin/aeon-daemon.rs"
 
+[[bin]]
+name = "aeon-console"
+path = "src/bin/aeon-console.rs"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

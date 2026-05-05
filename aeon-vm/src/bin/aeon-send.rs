@@ -22,12 +22,15 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         return Err(
-            "usage: aeon-send <program.aeon> [host:port] --snap-at <n> [--patch patch.bin]".into(),
+            "usage: aeon-send <program.aeon> [--to host:port] --snap-at <n> [--patch patch.bin]"
+                .into(),
         );
     }
 
     let program_path = Path::new(&args[1]);
-    let target = positional_target(&args).unwrap_or_else(|| "127.0.0.1:9999".to_string());
+    let target = flag(&args, "--to")
+        .or_else(|| positional_target(&args))
+        .unwrap_or_else(|| "127.0.0.1:9999".to_string());
     let snap_at = flag(&args, "--snap-at")
         .ok_or_else(|| "--snap-at is required".to_string())?
         .parse::<usize>()
@@ -57,6 +60,8 @@ fn run() -> Result<(), String> {
         to: target.clone(),
         steps: state.steps,
     });
+    save_snapshot(program_path, &snapshot)?;
+
     write_msg(&mut stream, SNAPSHOT, &snapshot.to_bytes()).map_err(|err| err.to_string())?;
     write_msg(&mut stream, PATCHSET, &patchset.to_bytes()).map_err(|err| err.to_string())?;
 
@@ -91,6 +96,15 @@ fn run() -> Result<(), String> {
         msg if msg.msg_type == ERROR => Err(String::from_utf8_lossy(&msg.payload).into_owned()),
         msg => Err(format!("unexpected response type {}", msg.msg_type)),
     }
+}
+
+fn save_snapshot(program_path: &Path, snapshot: &Snapshot) -> Result<(), String> {
+    let path = program_path.with_extension("snap");
+    snapshot
+        .save(&path)
+        .map_err(|err| format!("save snapshot {}: {}", path.display(), err))?;
+    println!("[aeon-send] Snapshot saved to {}", path.display());
+    Ok(())
 }
 
 fn load_patchset(args: &[String]) -> Result<PatchSet, String> {

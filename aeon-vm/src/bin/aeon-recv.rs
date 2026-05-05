@@ -20,7 +20,9 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
-    let bind = flag(&args, "--bind").unwrap_or_else(|| "0.0.0.0:9999".to_string());
+    let bind = flag(&args, "--bind")
+        .or_else(|| flag(&args, "--port").map(|port| format!("0.0.0.0:{}", port)))
+        .unwrap_or_else(|| "0.0.0.0:9999".to_string());
     let session = flag(&args, "--session")
         .map(|value| SessionId::from_str(&value))
         .unwrap_or_else(|| SessionId::new("receiver", "local", "console"));
