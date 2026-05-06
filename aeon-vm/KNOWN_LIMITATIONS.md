@@ -13,3 +13,4 @@
 - Step 14 daemon commands are checkpoint-oriented: `run` records a paused VM and `resume` executes it during the request rather than scheduling background VM execution.
 - Daemon recovery is local to the configured state directory and Unix socket path.
 - Console collaboration merges serialized `SharedContext` files; it is not yet a live multi-user transport.
+- `aeon-store` media classification uses MIME/extension only; image dimensions and audio/video durations are not parsed yet.

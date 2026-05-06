@@ -1,6 +1,6 @@
 use crate::{
-    pack_cids, unpack_cids, Account, Blob, CIDStore, Context, DataEvent, Node, SyncEngine,
-    SyncMessage, CONTEXT_MIME,
+    pack_cids, unpack_cids, Account, Blob, CIDStore, Context, DataDescriptor, DataEvent, DataKind,
+    Message, Node, SyncEngine, SyncMessage, Thread, CONTEXT_MIME, MESSAGE_MIME, THREAD_MIME,
 };
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -268,4 +268,99 @@ fn context_blob_syncs_between_devices() {
     assert_eq!(decoded.name, "shared");
     assert_eq!(decoded.nodes, context.nodes);
     assert_eq!(decoded.events, context.events);
+}
+
+#[test]
+fn data_kind_classifies_common_extensions() {
+    assert_eq!(
+        DataKind::from_path_and_mime(Some(std::path::Path::new("note.md")), "text/plain"),
+        DataKind::Markdown
+    );
+    assert_eq!(
+        DataKind::from_path_and_mime(Some(std::path::Path::new("main.rs")), "text/x-rust"),
+        DataKind::Code {
+            language: "rust".to_string()
+        }
+    );
+    assert_eq!(
+        DataKind::from_path_and_mime(
+            Some(std::path::Path::new("program.aeon")),
+            "application/x-aeon-program",
+        ),
+        DataKind::VMProgram
+    );
+}
+
+#[test]
+fn binary_image_roundtrip_is_exact() {
+    let root = TempRoot::new("image");
+    let mut store = CIDStore::new(root.path()).unwrap();
+    let bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4];
+    let blob = Blob::new(bytes.clone(), "image/png");
+
+    let cid = store.put(blob.clone()).unwrap();
+    let retrieved = store.get(&cid).unwrap().unwrap();
+    let descriptor = DataDescriptor::from_blob(Some(std::path::Path::new("shot.png")), &retrieved);
+
+    assert_eq!(retrieved.data, bytes);
+    assert_eq!(descriptor.blob_cid, blob.cid);
+    assert!(matches!(descriptor.kind, DataKind::Image { ref format, .. } if format == "png"));
+}
+
+#[test]
+fn conversation_message_and_thread_roundtrip() {
+    let content = Blob::from_text("hello bob");
+    let message = Message::new("thread-1", "alice", content.cid, None, 1);
+    let mut thread = Thread::new(
+        "thread-1",
+        vec!["alice".to_string(), "bob".to_string()],
+        Some("ctx-1".to_string()),
+    );
+    thread.add_message(&message);
+
+    let message_blob = message.to_blob().unwrap();
+    let thread_blob = thread.to_blob().unwrap();
+
+    assert_eq!(message_blob.mime, MESSAGE_MIME);
+    assert_eq!(thread_blob.mime, THREAD_MIME);
+    assert_eq!(Message::from_blob(&message_blob).unwrap(), message);
+    assert_eq!(Thread::from_blob(&thread_blob).unwrap(), thread);
+}
+
+#[test]
+fn conversation_message_syncs_between_devices() {
+    let root_a = TempRoot::new("chat-a");
+    let root_b = TempRoot::new("chat-b");
+    let mut store_a = CIDStore::new(root_a.path()).unwrap();
+    let content = Blob::from_text("arrived on device B");
+    let content_cid = store_a.put(content.clone()).unwrap();
+    let message = Message::new("thread-sync", "alice", content_cid, None, 42);
+    let message_cid = store_a.put(message.to_blob().unwrap()).unwrap();
+
+    sync_one_blob(root_a.path(), root_b.path(), content_cid);
+    sync_one_blob(root_a.path(), root_b.path(), message_cid);
+
+    let mut store_b = CIDStore::new(root_b.path()).unwrap();
+    let message_blob = store_b.get(&message_cid).unwrap().unwrap();
+    let decoded = Message::from_blob(&message_blob).unwrap();
+    let content_blob = store_b.get(&decoded.content_cid).unwrap().unwrap();
+
+    assert_eq!(decoded, message);
+    assert_eq!(content_blob.as_text(), Some("arrived on device B"));
+}
+
+fn sync_one_blob(root_a: PathBuf, root_b: PathBuf, cid: crate::CID) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let receiver = thread::spawn(move || {
+        let store_b = CIDStore::new(root_b).unwrap();
+        let mut engine_b = SyncEngine::new(store_b, [8u8; 16]);
+        engine_b.listen_once_on(listener).unwrap()
+    });
+
+    let store_a = CIDStore::new(root_a).unwrap();
+    let mut engine_a = SyncEngine::new(store_a, [7u8; 16]);
+    engine_a.announce_to(cid, &addr.to_string()).unwrap();
+    receiver.join().unwrap();
 }
