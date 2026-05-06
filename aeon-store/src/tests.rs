@@ -1,6 +1,8 @@
-use crate::{Blob, CIDStore, DataEvent, Node};
+use crate::{pack_cids, unpack_cids, Blob, CIDStore, DataEvent, Node, SyncEngine, SyncMessage};
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
@@ -115,4 +117,59 @@ fn event_log_records_all_operations() {
     let decoded: Vec<DataEvent> = serde_json::from_slice(&encoded).unwrap();
 
     assert_eq!(decoded, events);
+}
+
+#[test]
+fn packed_cids_roundtrip() {
+    let a = Blob::from_text("a").cid;
+    let b = Blob::from_text("b").cid;
+
+    let packed = pack_cids(&[a, b]);
+    let unpacked = unpack_cids(&packed).unwrap();
+
+    assert_eq!(unpacked, vec![a, b]);
+}
+
+#[test]
+fn sync_message_roundtrips_through_json() {
+    let blob = Blob::from_text("sync me");
+    let message = SyncMessage::Data {
+        blob: blob.clone(),
+        node: None,
+    };
+
+    let encoded = serde_json::to_vec(&message).unwrap();
+    let decoded: SyncMessage = serde_json::from_slice(&encoded).unwrap();
+
+    assert_eq!(decoded, message);
+}
+
+#[test]
+fn sync_announce_transfers_missing_blob() {
+    let root_a = TempRoot::new("sync-a");
+    let root_b = TempRoot::new("sync-b");
+    let mut store_a = CIDStore::new(root_a.path()).unwrap();
+    let cid = store_a.put(Blob::from_text("cross-device data")).unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let root_b_path = root_b.path();
+
+    let receiver = thread::spawn(move || {
+        let store_b = CIDStore::new(root_b_path).unwrap();
+        let mut engine_b = SyncEngine::new(store_b, [2u8; 16]);
+        engine_b.listen_once_on(listener).unwrap()
+    });
+
+    let mut engine_a = SyncEngine::new(store_a, [1u8; 16]);
+    let sent = engine_a.announce_to(cid, &addr.to_string()).unwrap();
+    let received = receiver.join().unwrap();
+
+    assert_eq!(sent.sent, 1);
+    assert_eq!(received.requested, 1);
+    assert_eq!(received.received, 1);
+
+    let mut reloaded_b = CIDStore::new(root_b.path()).unwrap();
+    let blob = reloaded_b.get(&cid).unwrap().unwrap();
+    assert_eq!(blob.as_text(), Some("cross-device data"));
 }

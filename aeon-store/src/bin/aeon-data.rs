@@ -1,4 +1,4 @@
-use aeon_store::{hex_cid, parse_cid_hex, Blob, CIDStore};
+use aeon_store::{hex_cid, parse_cid_hex, Blob, CIDStore, SyncEngine};
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -67,6 +67,7 @@ fn run() -> io::Result<()> {
             println!("mime: {}", blob.mime);
             println!("size: {} bytes", blob.data.len());
         }
+        "sync" => handle_sync(args.collect(), store)?,
         _ => usage(),
     }
 
@@ -101,6 +102,58 @@ fn parse_cli_cid(hex: &str) -> io::Result<[u8; 32]> {
     parse_cid_hex(hex).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
 }
 
+fn handle_sync(args: Vec<String>, store: CIDStore) -> io::Result<()> {
+    let mut engine = SyncEngine::new(store, local_device_id());
+    match args.as_slice() {
+        [mode, port] if mode == "--listen" => {
+            let addr = listen_addr(port);
+            println!("listening on {addr}");
+            let report = engine.listen_once(&addr)?;
+            println!(
+                "sync complete: requested {}, received {}, sent {}",
+                report.requested, report.received, report.sent
+            );
+        }
+        [mode, cid, peer_flag, peer] if mode == "--announce" && peer_flag == "--peer" => {
+            let cid = parse_cli_cid(cid)?;
+            let report = engine.announce_to(cid, peer)?;
+            println!(
+                "announced {} to {}: sent {}, received {}",
+                hex_cid(&cid),
+                peer,
+                report.sent,
+                report.received
+            );
+        }
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "sync --listen <port|addr> OR sync --announce <cid> --peer <addr>",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn listen_addr(port_or_addr: &str) -> String {
+    if port_or_addr.contains(':') {
+        port_or_addr.to_string()
+    } else {
+        format!("0.0.0.0:{port_or_addr}")
+    }
+}
+
+fn local_device_id() -> [u8; 16] {
+    let source = std::env::var("AEON_DEVICE_ID")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "aeon-local-device".to_string());
+    let hash = blake3::hash(source.as_bytes());
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&hash.as_bytes()[..16]);
+    id
+}
+
 fn required_arg(arg: Option<String>, usage_hint: &str) -> io::Result<String> {
     arg.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, usage_hint))
 }
@@ -113,4 +166,6 @@ fn usage() {
     eprintln!("  aeon-data list");
     eprintln!("  aeon-data import <path>");
     eprintln!("  aeon-data info <cid>");
+    eprintln!("  aeon-data sync --listen <port|addr>");
+    eprintln!("  aeon-data sync --announce <cid> --peer <addr>");
 }
