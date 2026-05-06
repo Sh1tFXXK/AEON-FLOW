@@ -37,6 +37,7 @@ pub struct DaemonState {
     state_dir: PathBuf,
     next_id: u64,
     vms: HashMap<String, VMRecord>,
+    pub event_tx: tokio::sync::broadcast::Sender<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,10 +50,12 @@ pub struct DaemonRequest {
 impl DaemonState {
     pub fn new(state_dir: PathBuf) -> Result<Self, String> {
         std::fs::create_dir_all(&state_dir).map_err(|err| err.to_string())?;
+        let (tx, _) = tokio::sync::broadcast::channel(100);
         Ok(DaemonState {
             state_dir,
             next_id: 1,
             vms: HashMap::new(),
+            event_tx: tx,
         })
     }
 
@@ -68,9 +71,14 @@ impl DaemonState {
             state_dir,
             next_id: manifest.next_id,
             vms: manifest.vms,
+            event_tx: tokio::sync::broadcast::channel(100).0,
         };
         state.append_daemon_restart_events()?;
         Ok(state)
+    }
+
+    fn emit(&self, event: &str) {
+        let _ = self.event_tx.send(event.to_string());
     }
 
     pub fn run_program(&mut self, program_path: &Path) -> Result<String, String> {
@@ -95,6 +103,7 @@ impl DaemonState {
             },
         );
         self.save_manifest()?;
+        self.emit(&format!(r#"{{"type": "VM_CREATED", "id": "{}"}}"#, id));
         Ok(id)
     }
 
@@ -159,7 +168,9 @@ impl DaemonState {
         snap.save(Path::new(&record.snapshot_path))
             .map_err(|err| format!("save snapshot: {}", err))?;
         record.status = "migrated".into();
-        self.save_manifest()
+        self.save_manifest()?;
+        self.emit(&format!(r#"{{"type": "VM_MIGRATED", "id": "{}", "to": "{}"}}"#, id, to));
+        Ok(())
     }
 
     pub fn log(&self, id: &str) -> Result<Vec<String>, String> {
@@ -248,23 +259,54 @@ pub fn default_state_dir() -> PathBuf {
 }
 
 #[cfg(unix)]
-pub fn serve(socket_path: &Path, state_dir: PathBuf) -> Result<(), String> {
+pub async fn serve(socket_path: &Path, state_dir: PathBuf) -> Result<(), String> {
     use std::os::unix::net::UnixListener;
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::accept_async;
+    use futures_util::StreamExt;
 
     if socket_path.exists() {
         std::fs::remove_file(socket_path).map_err(|err| err.to_string())?;
     }
+
+    let state = std::sync::Arc::new(tokio::sync::Mutex::new(
+        DaemonState::recover(state_dir).map_err(|err| err.to_string())?,
+    ));
+
+    // Command listener
     let listener = UnixListener::bind(socket_path).map_err(|err| err.to_string())?;
-    let mut state = DaemonState::recover(state_dir)?;
-    for stream in listener.incoming() {
-        let mut stream = stream.map_err(|err| err.to_string())?;
-        let mut line = String::new();
-        BufReader::new(stream.try_clone().map_err(|err| err.to_string())?)
-            .read_line(&mut line)
-            .map_err(|err| err.to_string())?;
-        let response = handle_json_request(&mut state, line.trim())
-            .unwrap_or_else(|err| json!({"ok": false, "error": err}).to_string());
-        writeln!(stream, "{}", response).map_err(|err| err.to_string())?;
+    listener.set_nonblocking(true).unwrap();
+    let state_clone = state.clone();
+    tokio::task::spawn(async move {
+        loop {
+            if let Ok((stream, _)) = listener.accept() {
+                let mut state = state_clone.lock().await;
+                let mut stream = stream;
+                let mut line = String::new();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let _ = reader.read_line(&mut line);
+                let response = handle_json_request(&mut state, line.trim())
+                    .unwrap_or_else(|err| json!({"ok": false, "error": err}).to_string());
+                let _ = writeln!(stream, "{}", response);
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+    });
+
+    // WebSocket broadcaster
+    let ws_listener = TcpListener::bind("127.0.0.1:8080").await.map_err(|e| e.to_string())?;
+    while let Ok((stream, _)) = ws_listener.accept().await {
+        let tx = state.lock().await.event_tx.clone();
+        let mut rx = tx.subscribe();
+        tokio::task::spawn(async move {
+            use futures_util::SinkExt;
+            if let Ok(ws_stream) = accept_async(stream).await {
+                let (mut write, _) = ws_stream.split();
+                while let Ok(msg) = rx.recv().await {
+                    let _ = write.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await;
+                }
+            }
+        });
     }
     Ok(())
 }

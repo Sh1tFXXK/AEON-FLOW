@@ -7,14 +7,15 @@ use std::env;
 use std::io::{self, Write};
 use std::path::Path;
 
-fn main() {
-    if let Err(err) = run() {
+#[tokio::main]
+async fn main() {
+    if let Err(err) = run().await {
         eprintln!("[aeon] {}", err);
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), String> {
+async fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("log") => {
@@ -27,7 +28,7 @@ fn run() -> Result<(), String> {
                 print_daemon_response("log", &[target.clone()])
             }
         }
-        Some("daemon") => serve(&default_socket_path(), default_state_dir()),
+        Some("daemon") => serve(&default_socket_path(), default_state_dir()).await,
         Some("ps") => print_daemon_response("ps", &[]),
         Some("run") => {
             let path = args
