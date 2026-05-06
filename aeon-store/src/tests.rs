@@ -1,4 +1,7 @@
-use crate::{pack_cids, unpack_cids, Blob, CIDStore, DataEvent, Node, SyncEngine, SyncMessage};
+use crate::{
+    pack_cids, unpack_cids, Account, Blob, CIDStore, Context, DataEvent, Node, SyncEngine,
+    SyncMessage, CONTEXT_MIME,
+};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -172,4 +175,97 @@ fn sync_announce_transfers_missing_blob() {
     let mut reloaded_b = CIDStore::new(root_b.path()).unwrap();
     let blob = reloaded_b.get(&cid).unwrap().unwrap();
     assert_eq!(blob.as_text(), Some("cross-device data"));
+}
+
+#[test]
+fn account_id_is_public_key_hash() {
+    let public_key = [7u8; 32];
+    let account = Account::from_public_key("alice", public_key);
+
+    assert_eq!(account.id, *blake3::hash(&public_key).as_bytes());
+    assert_eq!(account.display_name, "alice");
+}
+
+#[test]
+fn context_tracks_members_nodes_and_history() {
+    let alice = Account::from_public_key("alice", [1u8; 32]);
+    let bob = Account::from_public_key("bob", [2u8; 32]);
+    let old_node = Blob::from_text("v1").cid;
+    let new_node = Blob::from_text("v2").cid;
+    let mut context = Context::new("project", alice.id);
+
+    context.add_member(bob.id, 10);
+    context.add_node(old_node, alice.id, 11).unwrap();
+    context.update_node(old_node, new_node, bob.id, 12).unwrap();
+    context.message("reviewed", bob.id, 13).unwrap();
+
+    assert!(context.is_member(&alice.id));
+    assert!(context.is_member(&bob.id));
+    assert_eq!(context.nodes, vec![new_node]);
+    assert_eq!(context.events.len(), 5);
+}
+
+#[test]
+fn context_rejects_non_member_edits() {
+    let alice = Account::from_public_key("alice", [1u8; 32]);
+    let eve = Account::from_public_key("eve", [9u8; 32]);
+    let mut context = Context::new("project", alice.id);
+
+    let err = context.add_node(Blob::from_text("secret").cid, eve.id, 1);
+
+    assert!(err.is_err());
+    assert!(context.nodes.is_empty());
+}
+
+#[test]
+fn context_roundtrips_as_blob() {
+    let alice = Account::from_public_key("alice", [1u8; 32]);
+    let mut context = Context::new("project", alice.id);
+    context
+        .add_node(Blob::from_text("design").cid, alice.id, 2)
+        .unwrap();
+
+    let blob = context.to_blob().unwrap();
+    let decoded = Context::from_blob(&blob).unwrap();
+
+    assert_eq!(blob.mime, CONTEXT_MIME);
+    assert_eq!(decoded, context);
+}
+
+#[test]
+fn context_blob_syncs_between_devices() {
+    let alice = Account::from_public_key("alice", [1u8; 32]);
+    let mut context = Context::new("shared", alice.id);
+    context
+        .add_node(Blob::from_text("shared note").cid, alice.id, 2)
+        .unwrap();
+
+    let root_a = TempRoot::new("ctx-sync-a");
+    let root_b = TempRoot::new("ctx-sync-b");
+    let mut store_a = CIDStore::new(root_a.path()).unwrap();
+    let context_cid = store_a.put(context.to_blob().unwrap()).unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let root_b_path = root_b.path();
+
+    let receiver = thread::spawn(move || {
+        let store_b = CIDStore::new(root_b_path).unwrap();
+        let mut engine_b = SyncEngine::new(store_b, [4u8; 16]);
+        engine_b.listen_once_on(listener).unwrap()
+    });
+
+    let mut engine_a = SyncEngine::new(store_a, [3u8; 16]);
+    engine_a
+        .announce_to(context_cid, &addr.to_string())
+        .unwrap();
+    receiver.join().unwrap();
+
+    let mut reloaded_b = CIDStore::new(root_b.path()).unwrap();
+    let blob = reloaded_b.get(&context_cid).unwrap().unwrap();
+    let decoded = Context::from_blob(&blob).unwrap();
+
+    assert_eq!(decoded.name, "shared");
+    assert_eq!(decoded.nodes, context.nodes);
+    assert_eq!(decoded.events, context.events);
 }

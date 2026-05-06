@@ -1,4 +1,4 @@
-use aeon_store::{hex_cid, parse_cid_hex, Blob, CIDStore, SyncEngine};
+use aeon_store::{hex_cid, parse_cid_hex, Account, Blob, CIDStore, Context, SyncEngine, CID};
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -67,6 +67,8 @@ fn run() -> io::Result<()> {
             println!("mime: {}", blob.mime);
             println!("size: {} bytes", blob.data.len());
         }
+        "account" => handle_account(args.collect())?,
+        "context" => handle_context(args.collect(), &mut store)?,
         "sync" => handle_sync(args.collect(), store)?,
         _ => usage(),
     }
@@ -100,6 +102,85 @@ fn import_path(path: &Path, store: &mut CIDStore, stats: &mut ImportStats) -> io
 
 fn parse_cli_cid(hex: &str) -> io::Result<[u8; 32]> {
     parse_cid_hex(hex).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+}
+
+fn handle_account(args: Vec<String>) -> io::Result<()> {
+    match args.as_slice() {
+        [display_name, public_key] => {
+            let public_key = parse_cli_cid(public_key)?;
+            let account = Account::from_public_key(display_name, public_key);
+            println!("account: {}", hex_cid(&account.id));
+            println!("display_name: {}", account.display_name);
+        }
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "account <display-name> <public-key-hex>",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn handle_context(args: Vec<String>, store: &mut CIDStore) -> io::Result<()> {
+    match args.as_slice() {
+        [mode, name, owner_flag, owner] if mode == "new" && owner_flag == "--owner" => {
+            let owner = parse_cli_cid(owner)?;
+            let context = Context::new(name, owner);
+            print_stored_context(store, &context)?;
+        }
+        [mode, context_cid, node_cid, by_flag, by] if mode == "add" && by_flag == "--by" => {
+            let mut context = load_context(store, parse_cli_cid(context_cid)?)?;
+            context
+                .add_node(parse_cli_cid(node_cid)?, parse_cli_cid(by)?, now_millis())
+                .map_err(context_error)?;
+            print_stored_context(store, &context)?;
+        }
+        [mode, context_cid, account_flag, account]
+            if mode == "join" && account_flag == "--account" =>
+        {
+            let mut context = load_context(store, parse_cli_cid(context_cid)?)?;
+            context.add_member(parse_cli_cid(account)?, now_millis());
+            print_stored_context(store, &context)?;
+        }
+        [mode, context_cid, text, by_flag, by] if mode == "message" && by_flag == "--by" => {
+            let mut context = load_context(store, parse_cli_cid(context_cid)?)?;
+            context
+                .message(text, parse_cli_cid(by)?, now_millis())
+                .map_err(context_error)?;
+            print_stored_context(store, &context)?;
+        }
+        [mode, context_cid] if mode == "history" => {
+            let context = load_context(store, parse_cli_cid(context_cid)?)?;
+            println!("context: {} ({})", context.name, context.id);
+            for event in context.events {
+                println!("{event:?}");
+            }
+        }
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "context new/add/join/message/history",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn load_context(store: &mut CIDStore, cid: CID) -> io::Result<Context> {
+    let blob = store
+        .get(&cid)?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "context CID not found"))?;
+    Context::from_blob(&blob).map_err(json_error)
+}
+
+fn print_stored_context(store: &mut CIDStore, context: &Context) -> io::Result<()> {
+    let blob = context.to_blob().map_err(json_error)?;
+    let cid = store.put(blob)?;
+    println!("Context ID: {}", context.id);
+    println!("CID: {}", hex_cid(&cid));
+    println!("events: {}", context.events.len());
+    Ok(())
 }
 
 fn handle_sync(args: Vec<String>, store: CIDStore) -> io::Result<()> {
@@ -154,6 +235,21 @@ fn local_device_id() -> [u8; 16] {
     id
 }
 
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn json_error(err: serde_json::Error) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, err)
+}
+
+fn context_error(err: aeon_store::ContextError) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, err)
+}
+
 fn required_arg(arg: Option<String>, usage_hint: &str) -> io::Result<String> {
     arg.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, usage_hint))
 }
@@ -166,6 +262,12 @@ fn usage() {
     eprintln!("  aeon-data list");
     eprintln!("  aeon-data import <path>");
     eprintln!("  aeon-data info <cid>");
+    eprintln!("  aeon-data account <display-name> <public-key-hex>");
+    eprintln!("  aeon-data context new <name> --owner <account-id>");
+    eprintln!("  aeon-data context add <context-cid> <node-cid> --by <account-id>");
+    eprintln!("  aeon-data context join <context-cid> --account <account-id>");
+    eprintln!("  aeon-data context message <context-cid> <text> --by <account-id>");
+    eprintln!("  aeon-data context history <context-cid>");
     eprintln!("  aeon-data sync --listen <port|addr>");
     eprintln!("  aeon-data sync --announce <cid> --peer <addr>");
 }
