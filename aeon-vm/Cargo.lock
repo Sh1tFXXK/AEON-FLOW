@@ -3,9 +3,19 @@
 version = 4
 
 [[package]]
+name = "aeon-store"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aeon-vm"
 version = "0.2.0"
 dependencies = [
+ "aeon-store",
  "bincode",
  "blake3",
  "cranelift",

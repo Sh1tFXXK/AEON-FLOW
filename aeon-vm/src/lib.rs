@@ -4,6 +4,7 @@ pub mod asm;
 pub mod console;
 pub mod cowheap;
 pub mod daemon;
+pub mod data_layer;
 pub mod editor;
 pub mod eventlog;
 pub mod forth;
@@ -20,6 +21,7 @@ pub mod vm;
 
 // Re-export core types
 pub use asm::Assembler;
+pub use data_layer::{store_patchset, store_vm_snapshot, StoredPatchData, StoredVMData};
 pub use eventlog::{AeonEvent, EventLog};
 pub use forth::ForthPrototype;
 pub use inst::Inst;
