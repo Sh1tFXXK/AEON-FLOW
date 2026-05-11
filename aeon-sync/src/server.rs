@@ -39,6 +39,13 @@ pub struct StatusPayload {
 }
 
 #[derive(Serialize)]
+pub struct HistoryEntry {
+    pub version: u64,
+    pub cid: String,
+    pub modified: u64,
+}
+
+#[derive(Serialize)]
 pub struct DeviceStatus {
     pub name: String,
     pub online: bool,
@@ -54,7 +61,18 @@ pub async fn status(State(state): State<AppState>) -> Json<StatusPayload> {
     })
 }
 
-pub async fn list_files(State(state): State<AppState>) -> Json<Vec<FileEntry>> { /* unchanged */
+pub async fn file_history(Path(filename): Path<String>, State(state): State<AppState>) -> Json<Vec<HistoryEntry>> {
+    let Some(safe_name)=sanitize_filename(&filename) else { return Json(vec![]); };
+    let path = state.sync_dir.join(safe_name);
+    if let Ok(meta)=tokio::fs::metadata(&path).await {
+        let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+        let cid = tokio::fs::read(&path).await.ok().map(|d| blake3::hash(&d).to_hex()[..8].to_string()).unwrap_or_else(|| "unknown".to_string());
+        return Json(vec![HistoryEntry { version: 1, cid, modified }]);
+    }
+    Json(vec![])
+}
+
+pub async fn list_files(State(state): State<AppState>) -> Json<Vec<FileEntry>> {
     let mut entries = Vec::new();
     if let Ok(mut dir) = tokio::fs::read_dir(&state.sync_dir).await {
         while let Ok(Some(entry)) = dir.next_entry().await {
@@ -106,6 +124,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/ws", get(ws_handler))
         .route("/api/status", get(status))
         .route("/api/files", get(list_files))
+        .route("/api/history/:filename", get(file_history))
         .route("/api/upload", post(upload_file))
         .route("/api/download/:filename", get(download_file))
         .route("/api/files/:filename", delete(delete_file))

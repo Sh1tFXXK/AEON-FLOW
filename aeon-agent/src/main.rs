@@ -3,9 +3,10 @@ mod engine;
 mod protocol;
 mod watcher;
 
-use aeon_store::{DeviceInfo, Identity, Platform, CIDStore};
+use aeon_store::{Blob, DeviceInfo, Identity, Platform, CIDStore};
 use engine::{device_id_from_name, SyncEngine};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 #[tokio::main]
@@ -43,7 +44,32 @@ async fn main() {
     }
 
     tracing::info!("agent started: {}", engine.identity.id_short());
+    let file_index: Arc<Mutex<HashMap<String, [u8; 32]>>> = Arc::new(Mutex::new(HashMap::new()));
+
     while let Some(ev) = rx.recv().await {
-        tracing::info!("event: {:?}", ev);
+        match ev {
+            watcher::FileEvent::Created { path } | watcher::FileEvent::Modified { path } => {
+                if path.is_file() {
+                    if let Ok(blob) = Blob::from_file(&path) {
+                        let signed = engine.store.lock().unwrap().put_signed(
+                            blob.data.clone(),
+                            &blob.mime,
+                            &engine.identity,
+                            &engine.device,
+                        );
+                        if let Ok(signed) = signed {
+                            file_index.lock().unwrap().insert(path.to_string_lossy().to_string(), signed.cid);
+                            engine.announce(signed.cid).await;
+                            tracing::info!("synced: {}", path.display());
+                        }
+                    }
+                }
+            }
+            watcher::FileEvent::Deleted { path } => {
+                if let Some(cid) = file_index.lock().unwrap().remove(&path.to_string_lossy().to_string()) {
+                    engine.announce_delete(path.to_string_lossy().to_string(), cid).await;
+                }
+            }
+        }
     }
 }
