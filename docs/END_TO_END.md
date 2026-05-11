@@ -22,3 +22,8 @@
 ## 5. Reconnect auto-peering
 - use `AEON_AGENT_PEERS="127.0.0.1:8787,127.0.0.1:8788"`
 - agent retries missing peers every 5 seconds.
+
+
+## 6. Tombstone semantics
+- Remote delete applies only when local file is not newer than tombstone timestamp.
+- On startup, persisted tombstones are replayed against sync root for cold-start consistency.

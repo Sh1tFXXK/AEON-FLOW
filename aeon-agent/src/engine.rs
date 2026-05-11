@@ -34,10 +34,11 @@ pub struct SyncEngine {
     pub seen_nonces: Arc<Mutex<HashSet<([u8;32], u64)>>>,
     pub state: Arc<Mutex<SyncState>>,
     pub state_path: PathBuf,
+    pub sync_root: PathBuf,
 }
 
 impl SyncEngine {
-    pub fn new(identity: Arc<Identity>, device: DeviceInfo, store: CIDStore, state: SyncState, state_path: PathBuf) -> Self {
+    pub fn new(identity: Arc<Identity>, device: DeviceInfo, store: CIDStore, state: SyncState, state_path: PathBuf, sync_root: PathBuf) -> Self {
         Self {
             identity,
             device,
@@ -48,6 +49,7 @@ impl SyncEngine {
             seen_nonces: Arc::new(Mutex::new(HashSet::new())),
             state: Arc::new(Mutex::new(state)),
             state_path,
+            sync_root,
         }
     }
 
@@ -165,8 +167,10 @@ impl SyncEngine {
             SyncMsg::Deleted { path, cid, at, .. } => {
                 tracing::info!("peer deleted {} ({})", path, hex_cid(&cid));
                 let mut st = self.state.lock().unwrap();
-                st.add_tombstone(path, cid, at);
+                st.add_tombstone(path.clone(), cid, at);
                 st.save(&self.state_path);
+                drop(st);
+                self.apply_tombstone(path, at);
             }
             SyncMsg::Ping { .. } => {}
             SyncMsg::CollabPatch { doc_id, path, changes, by, at, nonce, public_key, signature } => {
@@ -207,6 +211,33 @@ impl SyncEngine {
         let mut st = self.state.lock().unwrap();
         st.mark_seen(&blob.cid);
         st.save(&self.state_path);
+    }
+
+
+    fn apply_tombstone(&self, path: String, at: u64) {
+        let rel = PathBuf::from(&path);
+        let target = if rel.is_absolute() { rel } else { self.sync_root.join(rel) };
+        if !target.starts_with(&self.sync_root) { return; }
+        let meta = std::fs::metadata(&target).ok();
+        if let Some(meta) = meta {
+            let local_ms = meta.modified().ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            // conflict rule: local newer content wins
+            if local_ms > at {
+                tracing::warn!("tombstone conflict kept local newer file: {}", target.display());
+                return;
+            }
+        }
+        let _ = std::fs::remove_file(&target);
+    }
+
+    pub fn replay_tombstones(&self) {
+        let st = self.state.lock().unwrap().clone();
+        for t in st.tombstones {
+            self.apply_tombstone(t.path, t.at);
+        }
     }
 
     pub async fn announce_delete(&self, path: String, cid: CID) {
@@ -284,6 +315,17 @@ impl SyncEngine {
             let data = content.into_bytes();
             let blob = Blob { cid: *blake3::hash(&data).as_bytes(), data, mime: "text/plain".to_string() };
             self.store.lock().unwrap().put(blob)?;
+            let mut st = self.state.lock().unwrap();
+            let doc_hex = aeon_store::hex_cid(&doc_id);
+            st.metric_mut(&doc_hex).applied_patches += 1;
+            if doc.should_compact(64) {
+                let snap = doc.snapshot_bytes();
+                let snap_path = self.sync_root.join(".aeon-collab").join(format!("{}.snap", doc_hex));
+                if let Some(p) = snap_path.parent() { let _ = std::fs::create_dir_all(p); }
+                let _ = std::fs::write(snap_path, snap);
+                st.metric_mut(&doc_hex).compacted_snapshots += 1;
+            }
+            st.save(&self.state_path);
             tracing::info!("collab merged for {}", path);
         }
         Ok(())
@@ -299,4 +341,17 @@ pub fn device_id_from_name(name: &str) -> [u8; 16] {
 
 pub fn parse_cid_list(input: &[String]) -> Vec<CID> {
     input.iter().filter_map(|x| parse_cid_hex(x).ok()).collect()
+}
+
+
+impl SyncEngine {
+    pub fn load_collab_snapshot(&self, doc_id: CID) {
+        let hex = aeon_store::hex_cid(&doc_id);
+        let path = self.sync_root.join(".aeon-collab").join(format!("{}.snap", hex));
+        if let Ok(bytes) = std::fs::read(path) {
+            if let Ok(doc) = CollabDoc::from_snapshot(&bytes) {
+                self.collab_docs.lock().unwrap().insert(doc_id, doc);
+            }
+        }
+    }
 }

@@ -11,11 +11,18 @@ pub struct Tombstone {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CollabMetrics {
+    pub applied_patches: u64,
+    pub compacted_snapshots: u64,
+}
+
 pub struct SyncState {
     pub seen_cids: HashSet<String>,
     pub tombstones: Vec<Tombstone>,
     pub collab_sessions: HashMap<String, String>,
     pub seen_nonces: HashMap<String, u64>,
+    pub collab_metrics: HashMap<String, CollabMetrics>,
 }
 
 impl SyncState {
@@ -68,5 +75,11 @@ impl SyncState {
     }
     pub fn cleanup_nonces(&mut self, now:u64, ttl:u64) {
         self.seen_nonces.retain(|_, ts| *ts + ttl >= now);
+    }
+}
+
+impl SyncState {
+    pub fn metric_mut(&mut self, doc_id_hex: &str) -> &mut CollabMetrics {
+        self.collab_metrics.entry(doc_id_hex.to_string()).or_default()
     }
 }

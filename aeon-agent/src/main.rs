@@ -38,7 +38,9 @@ async fn main() {
 
     let state_path = home.join(".aeon").join("agent_state.json");
     let sync_state = SyncState::load(&state_path);
-    let engine = Arc::new(SyncEngine::new(Arc::new(identity), device, store, sync_state, state_path));
+    let sync_root = dirs.get(0).cloned().unwrap_or_else(|| home.join("AEON"));
+    let engine = Arc::new(SyncEngine::new(Arc::new(identity), device, store, sync_state, state_path, sync_root));
+    engine.replay_tombstones();
     let listen_addr = std::env::var("AEON_AGENT_LISTEN").unwrap_or_else(|_| "0.0.0.0:8787".to_string());
     let accept_engine = engine.clone();
     tokio::spawn(async move { let _ = accept_engine.listen(&listen_addr).await; });
