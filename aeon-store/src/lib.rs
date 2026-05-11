@@ -21,7 +21,7 @@ pub use identity::{DeviceInfo, Identity, Platform};
 pub use kind::{DataDescriptor, DataKind};
 pub use link::Link;
 pub use node::Node;
-pub use store::{hex_cid, parse_cid_hex, CIDStore};
+pub use store::{hex_cid, parse_cid_hex, CIDStore, SignedBlob};
 pub use sync::{pack_cids, unpack_cids, SyncEngine, SyncMessage, SyncReport};
 
 #[cfg(test)]
