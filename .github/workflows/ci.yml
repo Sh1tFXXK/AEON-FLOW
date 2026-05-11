@@ -1,0 +1,21 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test aeon-store
+        run: cargo test
+        working-directory: aeon-store
+      - name: Test aeon-agent
+        run: cargo test --tests
+        working-directory: aeon-agent
+      - name: Check aeon-sync
+        run: cargo check
+        working-directory: aeon-sync
