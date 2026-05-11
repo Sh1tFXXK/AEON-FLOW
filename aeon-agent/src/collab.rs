@@ -39,7 +39,7 @@ impl CollabDoc {
         }
     }
 
-    pub fn save(&self) -> Vec<u8> {
+    pub fn save(&mut self) -> Vec<u8> {
         self.doc.save()
     }
 
@@ -56,7 +56,7 @@ impl CollabDoc {
         Ok(Self { doc, cid, change_count: 0 })
     }
 
-    pub fn snapshot_bytes(&self) -> Vec<u8> {
+    pub fn snapshot_bytes(&mut self) -> Vec<u8> {
         self.doc.save()
     }
 

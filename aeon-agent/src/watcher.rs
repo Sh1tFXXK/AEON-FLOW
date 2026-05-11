@@ -10,6 +10,18 @@ pub enum FileEvent {
 }
 
 pub fn default_sync_dirs() -> Vec<PathBuf> {
+    if let Ok(raw) = std::env::var("AEON_SYNC_DIRS") {
+        let dirs: Vec<PathBuf> = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .collect();
+        if !dirs.is_empty() {
+            return dirs;
+        }
+    }
+
     let home = dirs::home_dir().unwrap_or_default();
     #[cfg(target_os = "windows")]
     {
@@ -18,6 +30,16 @@ pub fn default_sync_dirs() -> Vec<PathBuf> {
     #[cfg(target_os = "linux")]
     {
         return vec![home.join("AEON"), home.join("Documents"), home.join("Downloads"), home.join("Pictures")];
+    }
+    #[cfg(target_os = "android")]
+    {
+        return vec![
+            home.join("AEON"),
+            PathBuf::from("/sdcard/DCIM/Camera"),
+            PathBuf::from("/sdcard/Download"),
+            PathBuf::from("/sdcard/Documents"),
+            PathBuf::from("/sdcard/Pictures"),
+        ];
     }
     vec![home.join("AEON")]
 }
@@ -40,6 +62,9 @@ pub fn start(dirs: Vec<PathBuf>, tx: mpsc::Sender<FileEvent>) -> notify::Result<
         Config::default(),
     )?;
 
-    for dir in dirs { let _ = std::fs::create_dir_all(&dir); watcher.watch(&dir, RecursiveMode::Recursive)?; }
+    for dir in dirs {
+        let _ = std::fs::create_dir_all(&dir);
+        watcher.watch(&dir, RecursiveMode::Recursive)?;
+    }
     Ok(watcher)
 }
