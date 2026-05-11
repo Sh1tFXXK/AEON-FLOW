@@ -1,4 +1,4 @@
-use aeon_store::{hex_cid, parse_cid_hex, Account, Blob, CIDStore, Context, SyncEngine, CID};
+use aeon_store::{hex_cid, parse_cid_hex, Account, Blob, CIDStore, Context, Identity, SyncEngine, CID};
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -67,6 +67,7 @@ fn run() -> io::Result<()> {
             println!("mime: {}", blob.mime);
             println!("size: {} bytes", blob.data.len());
         }
+        "identity" => handle_identity(args.collect())?,
         "account" => handle_account(args.collect())?,
         "context" => handle_context(args.collect(), &mut store)?,
         "sync" => handle_sync(args.collect(), store)?,
@@ -102,6 +103,56 @@ fn import_path(path: &Path, store: &mut CIDStore, stats: &mut ImportStats) -> io
 
 fn parse_cli_cid(hex: &str) -> io::Result<[u8; 32]> {
     parse_cid_hex(hex).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+}
+
+
+fn identity_path() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".aeon")
+        .join("identity")
+}
+
+fn handle_identity(args: Vec<String>) -> io::Result<()> {
+    match args.as_slice() {
+        [mode] if mode == "new" => {
+            let path = identity_path();
+            if path.exists() {
+                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "identity already exists"));
+            }
+            let identity = Identity::load_or_create(&path)?;
+            println!("✓ 新身份已创建: {}", identity.id_short());
+            println!("私钥保存到 {}", path.display());
+        }
+        [mode] if mode == "show" => {
+            let identity = Identity::load_or_create(&identity_path())?;
+            println!("身份 ID: {}", identity.id_hex());
+            println!("公钥: {}", identity.public_key_hex());
+        }
+        [mode] if mode == "export" => {
+            let identity = Identity::load_or_create(&identity_path())?;
+            println!("{}", identity.private_key_hex());
+        }
+        [mode, key] if mode == "import" => {
+            let bytes = hex::decode(key)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
+            if bytes.len() != 32 {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "identity key must be 32 bytes hex"));
+            }
+            let path = identity_path();
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&path, bytes)?;
+            let identity = Identity::load_or_create(&path)?;
+            println!("✓ 身份已导入: {}", identity.id_short());
+            println!("私钥保存到 {}", path.display());
+        }
+        _ => {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "identity new|show|export|import <private-key-hex>"));
+        }
+    }
+    Ok(())
 }
 
 fn handle_account(args: Vec<String>) -> io::Result<()> {
@@ -262,6 +313,7 @@ fn usage() {
     eprintln!("  aeon-data list");
     eprintln!("  aeon-data import <path>");
     eprintln!("  aeon-data info <cid>");
+    eprintln!("  aeon-data identity new|show|export|import <private-key-hex>");
     eprintln!("  aeon-data account <display-name> <public-key-hex>");
     eprintln!("  aeon-data context new <name> --owner <account-id>");
     eprintln!("  aeon-data context add <context-cid> <node-cid> --by <account-id>");
