@@ -24,4 +24,11 @@ pub enum SyncMsg {
         by: [u8; 32],
         at: u64,
     },
+    CollabPatch {
+        doc_id: CID,
+        path: String,
+        changes: Vec<u8>,
+        by: [u8; 32],
+        at: u64,
+    },
 }

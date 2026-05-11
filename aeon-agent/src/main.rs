@@ -61,6 +61,11 @@ async fn main() {
                         if let Ok(signed) = signed {
                             file_index.lock().unwrap().insert(path.to_string_lossy().to_string(), signed.cid);
                             engine.announce(signed.cid).await;
+                            if blob.mime.starts_with("text/") || blob.mime == "application/json" {
+                                let mut doc = collab::CollabDoc::new(&String::from_utf8_lossy(&blob.data));
+                                let changes = doc.save();
+                                engine.announce_collab_patch(doc.cid, path.to_string_lossy().to_string(), changes).await;
+                            }
                             tracing::info!("synced: {}", path.display());
                         }
                     }

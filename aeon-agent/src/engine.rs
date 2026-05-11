@@ -1,4 +1,4 @@
-use crate::protocol::SyncMsg;
+use crate::{collab::CollabDoc, protocol::SyncMsg};
 use aeon_store::{hex_cid, parse_cid_hex, Blob, CIDStore, DeviceInfo, Identity, Platform, SignedBlob, CID};
 use std::collections::HashMap;
 use std::io;
@@ -27,6 +27,7 @@ pub struct SyncEngine {
     pub device: DeviceInfo,
     pub store: Arc<Mutex<CIDStore>>,
     pub peers: Arc<RwLock<HashMap<String, PeerConn>>>,
+    pub collab_docs: Arc<Mutex<HashMap<CID, CollabDoc>>>,
 }
 
 impl SyncEngine {
@@ -36,6 +37,7 @@ impl SyncEngine {
             device,
             store: Arc::new(Mutex::new(store)),
             peers: Arc::new(RwLock::new(HashMap::new())),
+            collab_docs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -112,6 +114,9 @@ impl SyncEngine {
                 tracing::info!("peer deleted {} ({})", path, hex_cid(&cid));
             }
             SyncMsg::Ping { .. } => {}
+            SyncMsg::CollabPatch { doc_id, path, changes, by, at } => {
+                let _ = self.on_collab_patch(doc_id, path, changes, by, at).await;
+            }
         }
     }
 
@@ -143,6 +148,40 @@ impl SyncEngine {
     }
 }
 
+
+    pub async fn announce_collab_patch(&self, doc_id: CID, path: String, changes: Vec<u8>) {
+        let msg = SyncMsg::CollabPatch {
+            doc_id,
+            path,
+            changes,
+            by: self.identity.id,
+            at: now_ms(),
+        };
+        let peers = self.peers.read().await;
+        for peer in peers.values() {
+            let _ = peer.send(&msg).await;
+        }
+    }
+
+    async fn on_collab_patch(
+        &self,
+        doc_id: CID,
+        path: String,
+        changes: Vec<u8>,
+        _by: [u8; 32],
+        _at: u64,
+    ) -> io::Result<()> {
+        let mut docs = self.collab_docs.lock().unwrap();
+        let doc = docs.entry(doc_id).or_insert_with(|| CollabDoc::new(""));
+        if doc.merge(&changes).is_ok() {
+            let content = doc.content();
+            let data = content.into_bytes();
+            let blob = Blob { cid: *blake3::hash(&data).as_bytes(), data, mime: "text/plain".to_string() };
+            self.store.lock().unwrap().put(blob)?;
+            tracing::info!("collab merged for {}", path);
+        }
+        Ok(())
+    }
 fn now_ms() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) }
 
 pub fn device_id_from_name(name: &str) -> [u8; 16] {
