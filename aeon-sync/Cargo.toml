@@ -21,3 +21,5 @@ tracing-subscriber = "0.3"
 mime_guess = "2"
 indicatif = "0.17"
 tokio-util = { version = "0.7", features = ["io"] }
+
+aeon-store = { path = "../aeon-store" }

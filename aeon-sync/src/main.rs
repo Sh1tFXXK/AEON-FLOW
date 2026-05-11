@@ -1,26 +1,31 @@
+use aeon_store::Identity;
 use std::net::SocketAddr;
+use tokio::sync::broadcast;
 
 mod server;
+mod watcher;
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().with_target(false).compact().init();
 
-    let sync_dir = dirs::home_dir()
-        .expect("Cannot find home directory")
-        .join("AEON");
+    let home = dirs::home_dir().expect("Cannot find home directory");
+    let sync_dir = home.join("AEON");
     std::fs::create_dir_all(&sync_dir).expect("failed to create sync directory");
-    tracing::info!("Sync directory: {}", sync_dir.display());
 
-    let store_dir = dirs::home_dir()
-        .expect("Cannot find home directory")
-        .join(".aeon")
-        .join("store");
+    let store_dir = home.join(".aeon").join("store");
     std::fs::create_dir_all(&store_dir).expect("failed to create store directory");
-    tracing::info!("Store directory: {}", store_dir.display());
+
+    let identity_path = home.join(".aeon").join("identity");
+    let identity = Identity::load_or_create(&identity_path).expect("failed to load identity");
+
+    let (file_events, _) = broadcast::channel(128);
+    let _watcher = watcher::start_watcher(&sync_dir, file_events.clone()).expect("watcher start failed");
 
     let state = server::AppState {
         sync_dir: sync_dir.clone(),
+        file_events,
+        identity_short: identity.id_short(),
     };
 
     let app = server::create_router(state);
@@ -30,16 +35,13 @@ async fn main() {
 
     println!("\n⬡ AEON Flow 文件同步服务已启动");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("身份 ID:  {}", identity.id_short());
     println!("同步目录:  {}", sync_dir.display());
     println!("局域网:    http://{}:{}", local_ip, port);
     println!("本机访问:  http://localhost:{}", port);
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("把文件放入同步目录，手机浏览器打开上面的地址即可访问");
-    println!("提示: 运行 cloudflared tunnel --url http://localhost:{} 可从外网访问\n", port);
 
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("bind failed");
+    let listener = tokio::net::TcpListener::bind(addr).await.expect("bind failed");
     axum::serve(listener, app).await.expect("server failed");
 }
 
