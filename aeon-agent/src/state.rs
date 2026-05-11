@@ -15,6 +15,7 @@ pub struct SyncState {
     pub seen_cids: HashSet<String>,
     pub tombstones: Vec<Tombstone>,
     pub collab_sessions: HashMap<String, String>,
+    pub seen_nonces: HashMap<String, u64>,
 }
 
 impl SyncState {
@@ -55,5 +56,17 @@ impl SyncState {
             if let Ok(cid) = parse_cid_hex(&t.cid) { m.insert(t.path.clone(), cid); }
         }
         m
+    }
+}
+
+impl SyncState {
+    pub fn nonce_seen(&self, by:[u8;32], nonce:u64) -> bool {
+        self.seen_nonces.get(&format!("{}:{}", hex_cid(&by), nonce)).is_some()
+    }
+    pub fn mark_nonce(&mut self, by:[u8;32], nonce:u64, now:u64) {
+        self.seen_nonces.insert(format!("{}:{}", hex_cid(&by), nonce), now);
+    }
+    pub fn cleanup_nonces(&mut self, now:u64, ttl:u64) {
+        self.seen_nonces.retain(|_, ts| *ts + ttl >= now);
     }
 }

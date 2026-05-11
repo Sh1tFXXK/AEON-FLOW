@@ -1,4 +1,4 @@
-use crate::{collab::CollabDoc, protocol::SyncMsg, state::SyncState};
+use crate::{collab::CollabDoc, protocol::{SignedEnvelope, SyncMsg}, state::SyncState};
 use aeon_store::{hex_cid, parse_cid_hex, Blob, CIDStore, DeviceInfo, Identity, Platform, SignedBlob, CID};
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -16,9 +16,9 @@ pub struct PeerConn {
 }
 
 impl PeerConn {
-    pub async fn send(&self, msg: &SyncMsg) -> io::Result<()> {
+    pub async fn send(&self, env: &SignedEnvelope) -> io::Result<()> {
         let mut w = self.writer.lock().await;
-        let line = serde_json::to_string(msg).map_err(io::Error::other)? + "\n";
+        let line = serde_json::to_string(env).map_err(io::Error::other)? + "\n";
         w.write_all(line.as_bytes()).await
     }
 }
@@ -76,23 +76,54 @@ impl SyncEngine {
         let peer = PeerConn { addr: addr.clone(), writer: Arc::new(tokio::sync::Mutex::new(writer)) };
         self.peers.write().await.insert(addr.clone(), peer.clone());
 
-        peer.send(&SyncMsg::Hello {
+        let hello = self.sign_msg(SyncMsg::Hello {
             identity_id: self.identity.id,
             device_id: self.device.device_id,
             device_name: self.device.name.clone(),
             platform: Platform::current(),
             public_key: self.identity.public_key.as_bytes().to_vec(),
-        }).await?;
+        });
+        peer.send(&hello).await?;
 
         let mut lines = BufReader::new(reader).lines();
         while let Some(line) = lines.next_line().await? {
             if line.trim().is_empty() { continue; }
-            if let Ok(msg) = serde_json::from_str::<SyncMsg>(&line) {
-                self.on_message(msg, &peer).await;
+            if let Ok(env) = serde_json::from_str::<SignedEnvelope>(&line) {
+                if self.verify_env(&env) {
+                    self.on_message(env.msg, &peer).await;
+                }
             }
         }
         self.peers.write().await.remove(&addr);
         Ok(())
+    }
+
+
+    fn sign_msg(&self, msg: SyncMsg) -> SignedEnvelope {
+        let at = now_ms();
+        let nonce = at ^ 0x5A17_u64;
+        let by = self.identity.id;
+        let payload = SignedEnvelope::payload_bytes(&msg, by, at, nonce);
+        let signature = self.identity.sign(&payload).to_bytes().to_vec();
+        SignedEnvelope { msg, by, at, nonce, public_key: self.identity.public_key.as_bytes().to_vec(), signature }
+    }
+
+    fn verify_env(&self, env: &SignedEnvelope) -> bool {
+        let now = now_ms();
+        if env.at + 300_000 < now || env.at > now + 300_000 { return false; }
+        if env.public_key.len() != 32 || env.signature.len() != 64 { return false; }
+        if *blake3::hash(&env.public_key).as_bytes() != env.by { return false; }
+        let pk = match VerifyingKey::from_bytes(&env.public_key.clone().try_into().unwrap()) { Ok(v)=>v, Err(_)=>return false};
+        let mut sig = [0u8;64]; sig.copy_from_slice(&env.signature);
+        let sig = Signature::from_bytes(&sig);
+        let payload = SignedEnvelope::payload_bytes(&env.msg, env.by, env.at, env.nonce);
+        if pk.verify(&payload, &sig).is_err() { return false; }
+        let mut st = self.state.lock().unwrap();
+        st.cleanup_nonces(now, 600_000);
+        if st.nonce_seen(env.by, env.nonce) { return false; }
+        st.mark_nonce(env.by, env.nonce, now);
+        st.save(&self.state_path);
+        true
     }
 
     pub async fn announce(&self, cid: CID) {
@@ -103,7 +134,7 @@ impl SyncEngine {
             timestamp: now_ms(),
         };
         let peers = self.peers.read().await;
-        for peer in peers.values() { let _ = peer.send(&msg).await; }
+        for peer in peers.values() { let _ = peer.send(&self.sign_msg(msg.clone())).await; }
     }
 
     async fn on_message(&self, msg: SyncMsg, from: &PeerConn) {
@@ -183,7 +214,7 @@ impl SyncEngine {
         let msg = SyncMsg::Deleted { path: path.clone(), cid, by: self.identity.id, at, nonce: at ^ 0xD311_u64, public_key: self.identity.public_key.as_bytes().to_vec(), signature: self.identity.sign(path.as_bytes()).to_bytes().to_vec() };
         { let mut st = self.state.lock().unwrap(); st.add_tombstone(path, cid, at); st.save(&self.state_path); }
         let peers = self.peers.read().await;
-        for peer in peers.values() { let _ = peer.send(&msg).await; }
+        for peer in peers.values() { let _ = peer.send(&self.sign_msg(msg.clone())).await; }
     }
 }
 
