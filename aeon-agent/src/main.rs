@@ -15,6 +15,18 @@ use std::thread;
 use tokio::sync::mpsc;
 use tunnel::TunnelConfig;
 
+fn read_blob_with_retry(path: &std::path::Path) -> Option<Blob> {
+    for delay_ms in [0u64, 120, 300] {
+        if delay_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        }
+        if let Ok(blob) = Blob::from_file(path) {
+            return Some(blob);
+        }
+    }
+    None
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -192,7 +204,7 @@ async fn main() {
         match ev {
             watcher::FileEvent::Created { path } | watcher::FileEvent::Modified { path } => {
                 if path.is_file() {
-                    if let Ok(blob) = Blob::from_file(&path) {
+                    if let Some(blob) = read_blob_with_retry(&path) {
                         let signed = engine.store.lock().unwrap().put_signed(
                             blob.data.clone(),
                             &blob.mime,
@@ -201,10 +213,13 @@ async fn main() {
                         );
                         if let Ok(signed) = signed {
                             let path_str = path.to_string_lossy().to_string();
-                            file_index
-                                .lock()
-                                .unwrap()
-                                .insert(path_str.clone(), signed.cid);
+                            {
+                                let mut idx = file_index.lock().unwrap();
+                                if idx.get(&path_str).copied() == Some(signed.cid) {
+                                    continue;
+                                }
+                                idx.insert(path_str.clone(), signed.cid);
+                            }
                             {
                                 let mut st = engine.state.lock().unwrap();
                                 st.record_file_ingest(
