@@ -23,25 +23,32 @@ pub fn default_sync_dirs() -> Vec<PathBuf> {
     }
 
     let home = dirs::home_dir().unwrap_or_default();
-    #[cfg(target_os = "windows")]
-    {
-        return vec![home.join("AEON"), home.join("Desktop"), home.join("Documents"), home.join("Downloads"), home.join("Pictures")];
-    }
-    #[cfg(target_os = "linux")]
-    {
-        return vec![home.join("AEON"), home.join("Documents"), home.join("Downloads"), home.join("Pictures")];
-    }
-    #[cfg(target_os = "android")]
-    {
-        return vec![
+    if cfg!(target_os = "windows") {
+        vec![
+            home.join("AEON"),
+            home.join("Desktop"),
+            home.join("Documents"),
+            home.join("Downloads"),
+            home.join("Pictures"),
+        ]
+    } else if cfg!(target_os = "linux") {
+        vec![
+            home.join("AEON"),
+            home.join("Documents"),
+            home.join("Downloads"),
+            home.join("Pictures"),
+        ]
+    } else if cfg!(target_os = "android") {
+        vec![
             home.join("AEON"),
             PathBuf::from("/sdcard/DCIM/Camera"),
             PathBuf::from("/sdcard/Download"),
             PathBuf::from("/sdcard/Documents"),
             PathBuf::from("/sdcard/Pictures"),
-        ];
+        ]
+    } else {
+        vec![home.join("AEON")]
     }
-    vec![home.join("AEON")]
 }
 
 pub fn start(dirs: Vec<PathBuf>, tx: mpsc::Sender<FileEvent>) -> notify::Result<RecommendedWatcher> {
