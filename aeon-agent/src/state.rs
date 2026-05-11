@@ -14,6 +14,7 @@ pub struct Tombstone {
 pub struct SyncState {
     pub seen_cids: HashSet<String>,
     pub tombstones: Vec<Tombstone>,
+    pub collab_sessions: HashMap<String, String>,
 }
 
 impl SyncState {
@@ -35,6 +36,17 @@ impl SyncState {
     pub fn add_tombstone(&mut self, path: String, cid: CID, at: u64) {
         self.tombstones.push(Tombstone { path, cid: hex_cid(&cid), at });
         if self.tombstones.len() > 10_000 { self.tombstones.drain(0..2000); }
+    }
+
+    pub fn collab_doc_for_path(&mut self, path: &str) -> CID {
+        if let Some(hex) = self.collab_sessions.get(path) {
+            if let Ok(cid) = parse_cid_hex(hex) {
+                return cid;
+            }
+        }
+        let cid = *blake3::hash(path.as_bytes()).as_bytes();
+        self.collab_sessions.insert(path.to_string(), hex_cid(&cid));
+        cid
     }
 
     pub fn tombstone_map(&self) -> HashMap<String, CID> {

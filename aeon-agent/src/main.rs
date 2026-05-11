@@ -84,9 +84,15 @@ async fn main() {
                             file_index.lock().unwrap().insert(path.to_string_lossy().to_string(), signed.cid);
                             engine.announce(signed.cid).await;
                             if blob.mime.starts_with("text/") || blob.mime == "application/json" {
-                                let mut doc = collab::CollabDoc::new(&String::from_utf8_lossy(&blob.data));
-                                let changes = doc.save();
-                                engine.announce_collab_patch(doc.cid, path.to_string_lossy().to_string(), changes).await;
+                                let p = path.to_string_lossy().to_string();
+                                let (doc_id, changes) = {
+                                    let mut st = engine.state.lock().unwrap();
+                                    let doc_id = st.collab_doc_for_path(&p);
+                                    st.save(&engine.state_path);
+                                    let doc = collab::CollabDoc::new(&String::from_utf8_lossy(&blob.data));
+                                    (doc_id, doc.save())
+                                };
+                                engine.announce_collab_patch(doc_id, p, changes).await;
                             }
                             tracing::info!("synced: {}", path.display());
                         }
