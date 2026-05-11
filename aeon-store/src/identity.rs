@@ -91,27 +91,18 @@ pub enum Platform {
 
 impl Platform {
     pub fn current() -> Self {
-        #[cfg(target_os = "windows")]
-        {
-            return Platform::Windows;
+        if cfg!(target_os = "windows") {
+            Platform::Windows
+        } else if cfg!(target_os = "linux") {
+            Platform::Linux
+        } else if cfg!(target_os = "macos") {
+            Platform::MacOS
+        } else if cfg!(target_os = "android") {
+            Platform::Android
+        } else if cfg!(target_os = "ios") {
+            Platform::IOS
+        } else {
+            Platform::Web
         }
-        #[cfg(target_os = "linux")]
-        {
-            return Platform::Linux;
-        }
-        #[cfg(target_os = "macos")]
-        {
-            return Platform::MacOS;
-        }
-        #[cfg(target_os = "android")]
-        {
-            return Platform::Android;
-        }
-        #[cfg(target_os = "ios")]
-        {
-            return Platform::IOS;
-        }
-
-        Platform::Web
     }
 }
