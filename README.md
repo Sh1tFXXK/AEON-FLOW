@@ -133,6 +133,26 @@ aeon resume vm-1
 
 适用场景：长任务托管、批量任务管理、统一日志查看。
 
+
+### 6) 使用 Web UI（上传/查看同步历史）
+
+```bash
+# 终端1：启动两个 agent（可选，但推荐用于看到多端同步效果）
+(cd aeon-agent && AEON_AGENT_LISTEN=0.0.0.0:8787 cargo run)
+(cd aeon-agent && AEON_AGENT_LISTEN=0.0.0.0:8788 AEON_AGENT_PEER=127.0.0.1:8787 cargo run)
+
+# 终端2：启动 UI 服务
+(cd aeon-sync && cargo run)
+```
+
+然后在浏览器打开：`http://localhost:8080`。
+
+在 UI 中你可以：
+- 上传文件到同步目录
+- 在右侧面板查看历史与同步结果
+
+适用场景：演示同步流程、人工检查变更历史、验证多端同步链路。
+
 ---
 
 ## 5 分钟上手（最短路径）
