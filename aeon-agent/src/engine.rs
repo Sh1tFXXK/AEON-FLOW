@@ -1,11 +1,12 @@
 use crate::{collab::CollabDoc, protocol::SyncMsg};
 use aeon_store::{hex_cid, parse_cid_hex, Blob, CIDStore, DeviceInfo, Identity, Platform, SignedBlob, CID};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
+use ed25519_dalek::{Signature, VerifyingKey, Verifier};
 
 #[derive(Clone)]
 pub struct PeerConn {
@@ -28,6 +29,8 @@ pub struct SyncEngine {
     pub store: Arc<Mutex<CIDStore>>,
     pub peers: Arc<RwLock<HashMap<String, PeerConn>>>,
     pub collab_docs: Arc<Mutex<HashMap<CID, CollabDoc>>>,
+    pub known_keys: Arc<Mutex<HashMap<[u8;32], VerifyingKey>>>,
+    pub seen_nonces: Arc<Mutex<HashSet<([u8;32], u64)>>>,
 }
 
 impl SyncEngine {
@@ -38,6 +41,8 @@ impl SyncEngine {
             store: Arc::new(Mutex::new(store)),
             peers: Arc::new(RwLock::new(HashMap::new())),
             collab_docs: Arc::new(Mutex::new(HashMap::new())),
+            known_keys: Arc::new(Mutex::new(HashMap::new())),
+            seen_nonces: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -71,6 +76,7 @@ impl SyncEngine {
             device_id: self.device.device_id,
             device_name: self.device.name.clone(),
             platform: Platform::current(),
+            public_key: self.identity.public_key.as_bytes().to_vec(),
         }).await?;
 
         let mut lines = BufReader::new(reader).lines();
@@ -97,7 +103,12 @@ impl SyncEngine {
 
     async fn on_message(&self, msg: SyncMsg, from: &PeerConn) {
         match msg {
-            SyncMsg::Hello { .. } => {
+            SyncMsg::Hello { identity_id, public_key, .. } => {
+                if public_key.len() == 32 {
+                    if let Ok(pk) = VerifyingKey::from_bytes(&public_key.clone().try_into().unwrap()) {
+                        self.known_keys.lock().unwrap().insert(identity_id, pk);
+                    }
+                }
                 let cids = self.store.lock().unwrap().list().unwrap_or_default();
                 let _ = from.send(&SyncMsg::Have {
                     identity_id: self.identity.id,
@@ -118,8 +129,8 @@ impl SyncEngine {
                 tracing::info!("peer deleted {} ({})", path, hex_cid(&cid));
             }
             SyncMsg::Ping { .. } => {}
-            SyncMsg::CollabPatch { doc_id, path, changes, by, at } => {
-                let _ = self.on_collab_patch(doc_id, path, changes, by, at).await;
+            SyncMsg::CollabPatch { doc_id, path, changes, by, at, nonce, public_key, signature } => {
+                let _ = self.on_collab_patch(doc_id, path, changes, by, at, nonce, public_key, signature).await;
             }
         }
     }
@@ -141,6 +152,15 @@ impl SyncEngine {
     }
 
     async fn on_data(&self, blob: SignedBlob) {
+        if blob.data.len() > 10 * 1024 * 1024 { return; }
+        let maybe_pk = self.known_keys.lock().unwrap().get(&blob.created_by).cloned();
+        if let Some(pk) = maybe_pk {
+            if blob.signature.len() == 64 {
+                let mut sig = [0u8;64]; sig.copy_from_slice(&blob.signature);
+                let sig = Signature::from_bytes(&sig);
+                if pk.verify(&blob.cid, &sig).is_err() { return; }
+            } else { return; }
+        }
         let mut store = self.store.lock().unwrap();
         let _ = store.put(Blob { cid: blob.cid, data: blob.data, mime: blob.mime });
     }
@@ -154,12 +174,24 @@ impl SyncEngine {
 
 
     pub async fn announce_collab_patch(&self, doc_id: CID, path: String, changes: Vec<u8>) {
+        let at = now_ms();
+        let nonce = at ^ 0xA30Au64;
+        let mut sign_input = Vec::new();
+        sign_input.extend_from_slice(&doc_id);
+        sign_input.extend_from_slice(path.as_bytes());
+        sign_input.extend_from_slice(&changes);
+        sign_input.extend_from_slice(&nonce.to_le_bytes());
+        sign_input.extend_from_slice(&at.to_le_bytes());
+        let signature = self.identity.sign(&sign_input).to_bytes().to_vec();
         let msg = SyncMsg::CollabPatch {
             doc_id,
             path,
             changes,
             by: self.identity.id,
-            at: now_ms(),
+            at,
+            nonce,
+            public_key: self.identity.public_key.as_bytes().to_vec(),
+            signature,
         };
         let peers = self.peers.read().await;
         for peer in peers.values() {
@@ -172,9 +204,33 @@ impl SyncEngine {
         doc_id: CID,
         path: String,
         changes: Vec<u8>,
-        _by: [u8; 32],
-        _at: u64,
+        by: [u8; 32],
+        at: u64,
+        nonce: u64,
+        public_key: Vec<u8>,
+        signature: Vec<u8>,
     ) -> io::Result<()> {
+        let now = now_ms();
+        if at + 300_000 < now || at > now + 300_000 { return Ok(()); }
+        {
+            let mut seen = self.seen_nonces.lock().unwrap();
+            if seen.contains(&(by, nonce)) { return Ok(()); }
+            seen.insert((by, nonce));
+        }
+        if changes.len() > 2 * 1024 * 1024 { return Ok(()); }
+        if public_key.len() != 32 || signature.len() != 64 { return Ok(()); }
+        let pk = VerifyingKey::from_bytes(&public_key.clone().try_into().unwrap()).map_err(io::Error::other)?;
+        let mut sig_arr = [0u8;64]; sig_arr.copy_from_slice(&signature);
+        let sig = Signature::from_bytes(&sig_arr);
+        let mut sign_input = Vec::new();
+        sign_input.extend_from_slice(&doc_id);
+        sign_input.extend_from_slice(path.as_bytes());
+        sign_input.extend_from_slice(&changes);
+        sign_input.extend_from_slice(&nonce.to_le_bytes());
+        sign_input.extend_from_slice(&at.to_le_bytes());
+        if pk.verify(&sign_input, &sig).is_err() { return Ok(()); }
+        if *blake3::hash(pk.as_bytes()).as_bytes() != by { return Ok(()); }
+
         let mut docs = self.collab_docs.lock().unwrap();
         let doc = docs.entry(doc_id).or_insert_with(|| CollabDoc::new(""));
         if doc.merge(&changes).is_ok() {

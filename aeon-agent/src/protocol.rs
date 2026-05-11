@@ -16,6 +16,7 @@ pub enum SyncMsg {
         device_id: [u8; 16],
         device_name: String,
         platform: Platform,
+        public_key: Vec<u8>,
     },
     Ping { timestamp: u64 },
     Deleted {
@@ -23,6 +24,9 @@ pub enum SyncMsg {
         cid: CID,
         by: [u8; 32],
         at: u64,
+        nonce: u64,
+        public_key: Vec<u8>,
+        signature: Vec<u8>,
     },
     CollabPatch {
         doc_id: CID,
@@ -30,5 +34,8 @@ pub enum SyncMsg {
         changes: Vec<u8>,
         by: [u8; 32],
         at: u64,
+        nonce: u64,
+        public_key: Vec<u8>,
+        signature: Vec<u8>,
     },
 }
