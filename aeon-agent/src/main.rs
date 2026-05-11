@@ -1,3 +1,4 @@
+mod collab;
 mod discovery;
 mod engine;
 mod protocol;
