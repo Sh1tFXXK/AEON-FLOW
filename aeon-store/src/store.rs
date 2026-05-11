@@ -1,7 +1,21 @@
-use crate::{Blob, CID};
+use crate::{Blob, DeviceInfo, Identity, CID};
+use ed25519_dalek::Signature;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedBlob {
+    pub cid: CID,
+    pub data: Vec<u8>,
+    pub mime: String,
+    pub created_by: [u8; 32],
+    pub created_at: u64,
+    pub device_id: [u8; 16],
+    pub signature: Vec<u8>,
+}
 
 pub struct CIDStore {
     root: PathBuf,
@@ -39,6 +53,46 @@ impl CIDStore {
 
         self.memory.insert(cid, blob);
         Ok(cid)
+    }
+
+
+    pub fn put_signed(
+        &mut self,
+        data: Vec<u8>,
+        mime: &str,
+        identity: &Identity,
+        device: &DeviceInfo,
+    ) -> io::Result<SignedBlob> {
+        let cid = *blake3::hash(&data).as_bytes();
+        let signature = identity.sign(&cid).to_bytes().to_vec();
+
+        let blob = Blob {
+            cid,
+            data: data.clone(),
+            mime: mime.to_string(),
+        };
+        self.put(blob)?;
+
+        Ok(SignedBlob {
+            cid,
+            data,
+            mime: mime.to_string(),
+            created_by: identity.id,
+            created_at: now_ms(),
+            device_id: device.device_id,
+            signature,
+        })
+    }
+
+    pub fn verify_signed_blob(blob: &SignedBlob, identity: &Identity) -> bool {
+        if blob.created_by != identity.id {
+            return false;
+        }
+        let Ok(sig_bytes) = <[u8; 64]>::try_from(blob.signature.as_slice()) else {
+            return false;
+        };
+        let sig = Signature::from_bytes(&sig_bytes);
+        Identity::verify(&identity.public_key, &blob.cid, &sig)
     }
 
     pub fn get(&mut self, cid: &CID) -> io::Result<Option<Blob>> {
@@ -184,4 +238,11 @@ fn decode_blob(expected_cid: CID, buf: &[u8]) -> io::Result<Blob> {
 
 fn invalid_data(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }

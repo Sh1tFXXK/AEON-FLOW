@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>AEON</title>
+<style>body{margin:0;background:#0d0d1a;color:#e2e2f0;font-family:-apple-system,sans-serif}.top{height:48px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid #222}.main{display:flex;height:calc(100vh - 48px)}.left{width:280px;border-right:1px solid #222;overflow:auto}.mid{flex:1;overflow:auto;padding:16px}.right{width:240px;border-left:1px solid #222;padding:12px;overflow:auto}.item{padding:10px;border-bottom:1px solid #222;cursor:pointer}.item.active{background:#1a1a2b}.btn{padding:6px 10px;background:#333;color:#fff;border:0}.cid{font-family:monospace;font-size:12px;color:#8a8}</style></head>
+<body><div class="top">⬡ AEON <span id="identity" style="margin-left:8px;color:#7b7bff"></span><input type="file" id="upload" multiple style="margin-left:auto"></div>
+<div class="main"><div class="left" id="stream"></div><div class="mid"><h3 id="name">选择文件</h3><div id="preview"></div></div><div class="right"><div>版本历史</div><div id="history"></div><hr><div>CID</div><div id="cid" class="cid">-</div></div></div>
+<script>
+let files=[], current=null;
+async function status(){const r=await fetch('/api/status');const s=await r.json();identity.textContent=s.identity_short||''}
+async function load(){const r=await fetch('/api/files');files=await r.json();stream.innerHTML=files.map(f=>`<div class="item ${current&&current.name===f.name?'active':''}" onclick='pick(${JSON.stringify(JSON.stringify(f))})'>${f.name}<br><small>${f.size_human}</small></div>`).join('')}
+async function pick(json){current=JSON.parse(json);name.textContent=current.name;cid.textContent=current.cid;if(current.mime.startsWith('image/')){preview.innerHTML=`<img src="/api/download/${encodeURIComponent(current.name)}" style="max-width:100%">`}else{const t=await (await fetch(`/api/download/${encodeURIComponent(current.name)}`)).text();preview.innerHTML=`<pre>${t.replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]))}</pre>`;}const h=await (await fetch(`/api/history/${encodeURIComponent(current.name)}`)).json();history.innerHTML=h.map(x=>`<div>v${x.version} ${new Date(x.modified).toLocaleString()}<br><span class='cid'>${x.cid}</span></div>`).join('<hr>');load();}
+upload.onchange=async e=>{const form=new FormData();for(const f of e.target.files)form.append('file',f);await fetch('/api/upload',{method:'POST',body:form});load();}
+function ws(){const w=new WebSocket(`ws://${location.host}/ws`);w.onmessage=()=>load();w.onclose=()=>setTimeout(ws,2000)}
+status();load();ws();
+</script></body></html>
