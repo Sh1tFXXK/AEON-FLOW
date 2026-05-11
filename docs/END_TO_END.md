@@ -17,3 +17,8 @@
 - `pkg install rust git`
 - `git clone <repo> && cd AEON-FLOW/aeon-agent`
 - `AEON_AGENT_LISTEN=0.0.0.0:8787 cargo run`
+
+
+## 5. Reconnect auto-peering
+- use `AEON_AGENT_PEERS="127.0.0.1:8787,127.0.0.1:8788"`
+- agent retries missing peers every 5 seconds.

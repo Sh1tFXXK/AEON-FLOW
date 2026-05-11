@@ -39,9 +39,27 @@ async fn main() {
     let accept_engine = engine.clone();
     tokio::spawn(async move { let _ = accept_engine.listen(&listen_addr).await; });
 
-    if let Ok(peer) = std::env::var("AEON_AGENT_PEER") {
-        let connect_engine = engine.clone();
-        tokio::spawn(async move { let _ = connect_engine.connect(&peer).await; });
+    let peers = std::env::var("AEON_AGENT_PEERS")
+        .or_else(|_| std::env::var("AEON_AGENT_PEER"))
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    if !peers.is_empty() {
+        let retry_engine = engine.clone();
+        tokio::spawn(async move {
+            loop {
+                for peer in &peers {
+                    if !retry_engine.has_peer(peer).await {
+                        let _ = retry_engine.clone().connect(peer).await;
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
     }
 
     tracing::info!("agent started: {}", engine.identity.id_short());

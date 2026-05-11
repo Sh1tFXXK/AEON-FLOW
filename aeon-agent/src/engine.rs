@@ -52,6 +52,10 @@ impl SyncEngine {
         }
     }
 
+    pub async fn has_peer(&self, addr: &str) -> bool {
+        self.peers.read().await.contains_key(addr)
+    }
+
     pub async fn connect(self: Arc<Self>, addr: &str) -> io::Result<()> {
         let stream = TcpStream::connect(addr).await?;
         self.handle_incoming(stream, addr.to_string()).await
