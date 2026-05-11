@@ -17,10 +17,10 @@ async fn main() {
         .join(".aeon")
         .join("store");
     std::fs::create_dir_all(&store_dir).expect("failed to create store directory");
+    tracing::info!("Store directory: {}", store_dir.display());
 
     let state = server::AppState {
         sync_dir: sync_dir.clone(),
-        store_dir,
     };
 
     let app = server::create_router(state);

@@ -13,7 +13,6 @@ use tokio_util::io::ReaderStream;
 #[derive(Clone)]
 pub struct AppState {
     pub sync_dir: PathBuf,
-    pub store_dir: PathBuf,
 }
 
 #[derive(Serialize)]
