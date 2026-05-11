@@ -1,0 +1,47 @@
+use aeon_store::{hex_cid, parse_cid_hex, CID};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Tombstone {
+    pub path: String,
+    pub cid: String,
+    pub at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SyncState {
+    pub seen_cids: HashSet<String>,
+    pub tombstones: Vec<Tombstone>,
+}
+
+impl SyncState {
+    pub fn load(path: &PathBuf) -> Self {
+        std::fs::read(path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self, path: &PathBuf) {
+        if let Some(p) = path.parent() { let _ = std::fs::create_dir_all(p); }
+        if let Ok(bytes) = serde_json::to_vec_pretty(self) { let _ = std::fs::write(path, bytes); }
+    }
+
+    pub fn has_seen(&self, cid: &CID) -> bool { self.seen_cids.contains(&hex_cid(cid)) }
+    pub fn mark_seen(&mut self, cid: &CID) { self.seen_cids.insert(hex_cid(cid)); }
+
+    pub fn add_tombstone(&mut self, path: String, cid: CID, at: u64) {
+        self.tombstones.push(Tombstone { path, cid: hex_cid(&cid), at });
+        if self.tombstones.len() > 10_000 { self.tombstones.drain(0..2000); }
+    }
+
+    pub fn tombstone_map(&self) -> HashMap<String, CID> {
+        let mut m = HashMap::new();
+        for t in &self.tombstones {
+            if let Ok(cid) = parse_cid_hex(&t.cid) { m.insert(t.path.clone(), cid); }
+        }
+        m
+    }
+}

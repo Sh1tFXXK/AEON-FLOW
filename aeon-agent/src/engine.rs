@@ -1,8 +1,9 @@
-use crate::{collab::CollabDoc, protocol::SyncMsg};
+use crate::{collab::CollabDoc, protocol::SyncMsg, state::SyncState};
 use aeon_store::{hex_cid, parse_cid_hex, Blob, CIDStore, DeviceInfo, Identity, Platform, SignedBlob, CID};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
@@ -31,10 +32,12 @@ pub struct SyncEngine {
     pub collab_docs: Arc<Mutex<HashMap<CID, CollabDoc>>>,
     pub known_keys: Arc<Mutex<HashMap<[u8;32], VerifyingKey>>>,
     pub seen_nonces: Arc<Mutex<HashSet<([u8;32], u64)>>>,
+    pub state: Arc<Mutex<SyncState>>,
+    pub state_path: PathBuf,
 }
 
 impl SyncEngine {
-    pub fn new(identity: Arc<Identity>, device: DeviceInfo, store: CIDStore) -> Self {
+    pub fn new(identity: Arc<Identity>, device: DeviceInfo, store: CIDStore, state: SyncState, state_path: PathBuf) -> Self {
         Self {
             identity,
             device,
@@ -43,6 +46,8 @@ impl SyncEngine {
             collab_docs: Arc::new(Mutex::new(HashMap::new())),
             known_keys: Arc::new(Mutex::new(HashMap::new())),
             seen_nonces: Arc::new(Mutex::new(HashSet::new())),
+            state: Arc::new(Mutex::new(state)),
+            state_path,
         }
     }
 
@@ -119,14 +124,18 @@ impl SyncEngine {
             }
             SyncMsg::Have { cids, .. } => {
                 let store = self.store.lock().unwrap();
-                let missing: Vec<CID> = cids.into_iter().filter(|cid| !store.has(cid)).collect();
+                let st = self.state.lock().unwrap();
+                let missing: Vec<CID> = cids.into_iter().filter(|cid| !store.has(cid) && !st.has_seen(cid)).collect();
                 drop(store);
                 for cid in missing { let _ = from.send(&SyncMsg::Want { cid }).await; }
             }
             SyncMsg::Want { cid } => self.on_want(cid, from).await,
             SyncMsg::Data { blob } => self.on_data(blob).await,
-            SyncMsg::Deleted { path, cid, .. } => {
+            SyncMsg::Deleted { path, cid, at, .. } => {
                 tracing::info!("peer deleted {} ({})", path, hex_cid(&cid));
+                let mut st = self.state.lock().unwrap();
+                st.add_tombstone(path, cid, at);
+                st.save(&self.state_path);
             }
             SyncMsg::Ping { .. } => {}
             SyncMsg::CollabPatch { doc_id, path, changes, by, at, nonce, public_key, signature } => {
@@ -163,10 +172,16 @@ impl SyncEngine {
         }
         let mut store = self.store.lock().unwrap();
         let _ = store.put(Blob { cid: blob.cid, data: blob.data, mime: blob.mime });
+        drop(store);
+        let mut st = self.state.lock().unwrap();
+        st.mark_seen(&blob.cid);
+        st.save(&self.state_path);
     }
 
     pub async fn announce_delete(&self, path: String, cid: CID) {
-        let msg = SyncMsg::Deleted { path, cid, by: self.identity.id, at: now_ms() };
+        let at = now_ms();
+        let msg = SyncMsg::Deleted { path: path.clone(), cid, by: self.identity.id, at, nonce: at ^ 0xD311_u64, public_key: self.identity.public_key.as_bytes().to_vec(), signature: self.identity.sign(path.as_bytes()).to_bytes().to_vec() };
+        { let mut st = self.state.lock().unwrap(); st.add_tombstone(path, cid, at); st.save(&self.state_path); }
         let peers = self.peers.read().await;
         for peer in peers.values() { let _ = peer.send(&msg).await; }
     }

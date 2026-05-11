@@ -2,10 +2,12 @@ mod collab;
 mod discovery;
 mod engine;
 mod protocol;
+mod state;
 mod watcher;
 
 use aeon_store::{Blob, DeviceInfo, Identity, Platform, CIDStore};
 use engine::{device_id_from_name, SyncEngine};
+use state::SyncState;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -34,7 +36,9 @@ async fn main() {
         last_seen: 0,
     };
 
-    let engine = Arc::new(SyncEngine::new(Arc::new(identity), device, store));
+    let state_path = home.join(".aeon").join("agent_state.json");
+    let sync_state = SyncState::load(&state_path);
+    let engine = Arc::new(SyncEngine::new(Arc::new(identity), device, store, sync_state, state_path));
     let listen_addr = std::env::var("AEON_AGENT_LISTEN").unwrap_or_else(|_| "0.0.0.0:8787".to_string());
     let accept_engine = engine.clone();
     tokio::spawn(async move { let _ = accept_engine.listen(&listen_addr).await; });
@@ -63,7 +67,7 @@ async fn main() {
     }
 
     tracing::info!("agent started: {}", engine.identity.id_short());
-    let file_index: Arc<Mutex<HashMap<String, [u8; 32]>>> = Arc::new(Mutex::new(HashMap::new()));
+    let file_index: Arc<Mutex<HashMap<String, [u8; 32]>>> = Arc::new(Mutex::new(engine.state.lock().unwrap().tombstone_map()));
 
     while let Some(ev) = rx.recv().await {
         match ev {
