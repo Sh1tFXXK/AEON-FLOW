@@ -28,6 +28,14 @@ pub enum SyncMsg {
         public_key: Vec<u8>,
         signature: Vec<u8>,
     },
+    FileIngest {
+        path: String,
+        cid: CID,
+        identity_id: [u8; 32],
+        device_id: [u8; 16],
+        mime: String,
+        observed_at: u64,
+    },
     CollabPatch {
         doc_id: CID,
         path: String,

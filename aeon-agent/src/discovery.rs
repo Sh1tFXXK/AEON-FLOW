@@ -1,4 +1,4 @@
-use mdns_sd::{ServiceDaemon, ServiceInfo};
+use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 
 pub struct Discovery {
     pub identity_id: [u8; 32],
@@ -15,5 +15,9 @@ impl Discovery {
             .map_err(|e| e.to_string())?;
         mdns.register(service).map_err(|e| e.to_string())?;
         Ok(mdns)
+    }
+
+    pub fn browse(mdns: &ServiceDaemon) -> Result<mdns_sd::Receiver<ServiceEvent>, String> {
+        mdns.browse("_aeon._tcp.local.").map_err(|e| e.to_string())
     }
 }

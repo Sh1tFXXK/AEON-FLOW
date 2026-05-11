@@ -8,7 +8,7 @@ name = "aeon-sync"
 path = "src/main.rs"
 
 [dependencies]
-axum = { version = "0.7", features = ["multipart"] }
+axum = { version = "0.7", features = ["multipart", "ws"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 notify = "6"

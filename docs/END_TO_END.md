@@ -16,14 +16,21 @@
 ## 4. Android Termux
 - `pkg install rust git`
 - `git clone <repo> && cd AEON-FLOW/aeon-agent`
-- `AEON_AGENT_LISTEN=0.0.0.0:8787 cargo run`
+- `AEON_DEVICE_NAME=android-phone AEON_AGENT_LISTEN=0.0.0.0:8787 cargo run`
+
+## 5. Android node mode (Step 5)
+- Default Android watch roots: `/sdcard/DCIM/Camera`, `/sdcard/Download`, `/sdcard/Documents`, `/sdcard/Pictures`, and `~/AEON`.
+- Override watch roots explicitly with:
+  - `AEON_SYNC_DIRS="/sdcard/DCIM/Camera,/sdcard/Download,/sdcard/Documents"`
+- Example with bootstrap peer:
+  - `AEON_DEVICE_NAME=android-phone AEON_AGENT_LISTEN=0.0.0.0:8787 AEON_AGENT_PEER=192.168.1.8:8787 cargo run`
 
 
-## 5. Reconnect auto-peering
+## 6. Reconnect auto-peering
 - use `AEON_AGENT_PEERS="127.0.0.1:8787,127.0.0.1:8788"`
 - agent retries missing peers every 5 seconds.
 
 
-## 6. Tombstone semantics
+## 7. Tombstone semantics
 - Remote delete applies only when local file is not newer than tombstone timestamp.
 - On startup, persisted tombstones are replayed against sync root for cold-start consistency.

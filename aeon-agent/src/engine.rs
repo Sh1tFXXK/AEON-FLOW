@@ -122,6 +122,7 @@ impl SyncEngine {
         if pk.verify(&payload, &sig).is_err() { return false; }
         let mut st = self.state.lock().unwrap();
         st.cleanup_nonces(now, 600_000);
+        if !st.trust_key(env.by, &env.public_key) { return false; }
         if st.nonce_seen(env.by, env.nonce) { return false; }
         st.mark_nonce(env.by, env.nonce, now);
         st.save(&self.state_path);
@@ -145,25 +146,35 @@ impl SyncEngine {
                 if public_key.len() == 32 {
                     if let Ok(pk) = VerifyingKey::from_bytes(&public_key.clone().try_into().unwrap()) {
                         self.known_keys.lock().unwrap().insert(identity_id, pk);
+                        let mut st = self.state.lock().unwrap();
+                        if st.trust_key(identity_id, &public_key) {
+                            st.save(&self.state_path);
+                        }
                     }
                 }
                 let cids = self.store.lock().unwrap().list().unwrap_or_default();
-                let _ = from.send(&SyncMsg::Have {
+                let _ = from.send(&self.sign_msg(SyncMsg::Have {
                     identity_id: self.identity.id,
                     device_id: self.device.device_id,
                     cids,
                     timestamp: now_ms(),
-                }).await;
+                })).await;
             }
             SyncMsg::Have { cids, .. } => {
-                let store = self.store.lock().unwrap();
-                let st = self.state.lock().unwrap();
-                let missing: Vec<CID> = cids.into_iter().filter(|cid| !store.has(cid) && !st.has_seen(cid)).collect();
-                drop(store);
-                for cid in missing { let _ = from.send(&SyncMsg::Want { cid }).await; }
+                let missing: Vec<CID> = {
+                    let store = self.store.lock().unwrap();
+                    let st = self.state.lock().unwrap();
+                    cids.into_iter().filter(|cid| !store.has(cid) && !st.has_seen(cid)).collect()
+                };
+                for cid in missing { let _ = from.send(&self.sign_msg(SyncMsg::Want { cid })).await; }
             }
             SyncMsg::Want { cid } => self.on_want(cid, from).await,
             SyncMsg::Data { blob } => self.on_data(blob).await,
+            SyncMsg::FileIngest { path, cid, identity_id, device_id, mime, observed_at } => {
+                let mut st = self.state.lock().unwrap();
+                st.record_file_ingest(&path, cid, identity_id, device_id, &mime, observed_at);
+                st.save(&self.state_path);
+            }
             SyncMsg::Deleted { path, cid, at, .. } => {
                 tracing::info!("peer deleted {} ({})", path, hex_cid(&cid));
                 let mut st = self.state.lock().unwrap();
@@ -191,7 +202,7 @@ impl SyncEngine {
                 device_id: self.device.device_id,
                 signature: self.identity.sign(&cid).to_bytes().to_vec(),
             };
-            let _ = to.send(&SyncMsg::Data { blob: signed }).await;
+            let _ = to.send(&self.sign_msg(SyncMsg::Data { blob: signed })).await;
         }
     }
 
@@ -240,6 +251,19 @@ impl SyncEngine {
         }
     }
 
+    pub async fn announce_file_ingest(&self, path: String, cid: CID, mime: String, observed_at: u64) {
+        let msg = SyncMsg::FileIngest {
+            path,
+            cid,
+            identity_id: self.identity.id,
+            device_id: self.device.device_id,
+            mime,
+            observed_at,
+        };
+        let peers = self.peers.read().await;
+        for peer in peers.values() { let _ = peer.send(&self.sign_msg(msg.clone())).await; }
+    }
+
     pub async fn announce_delete(&self, path: String, cid: CID) {
         let at = now_ms();
         let msg = SyncMsg::Deleted { path: path.clone(), cid, by: self.identity.id, at, nonce: at ^ 0xD311_u64, public_key: self.identity.public_key.as_bytes().to_vec(), signature: self.identity.sign(path.as_bytes()).to_bytes().to_vec() };
@@ -249,7 +273,7 @@ impl SyncEngine {
     }
 }
 
-
+impl SyncEngine {
     pub async fn announce_collab_patch(&self, doc_id: CID, path: String, changes: Vec<u8>) {
         let at = now_ms();
         let nonce = at ^ 0xA30Au64;
@@ -272,7 +296,7 @@ impl SyncEngine {
         };
         let peers = self.peers.read().await;
         for peer in peers.values() {
-            let _ = peer.send(&msg).await;
+            let _ = peer.send(&self.sign_msg(msg.clone())).await;
         }
     }
 
@@ -330,6 +354,8 @@ impl SyncEngine {
         }
         Ok(())
     }
+}
+
 fn now_ms() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) }
 
 pub fn device_id_from_name(name: &str) -> [u8; 16] {

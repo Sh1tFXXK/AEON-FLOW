@@ -1,14 +1,57 @@
 <!DOCTYPE html>
-<html lang="zh"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>AEON</title>
-<style>body{margin:0;background:#0d0d1a;color:#e2e2f0;font-family:-apple-system,sans-serif}.top{height:48px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid #222}.main{display:flex;height:calc(100vh - 48px)}.left{width:280px;border-right:1px solid #222;overflow:auto}.mid{flex:1;overflow:auto;padding:16px}.right{width:240px;border-left:1px solid #222;padding:12px;overflow:auto}.item{padding:10px;border-bottom:1px solid #222;cursor:pointer}.item.active{background:#1a1a2b}.btn{padding:6px 10px;background:#333;color:#fff;border:0}.cid{font-family:monospace;font-size:12px;color:#8a8}</style></head>
-<body><div class="top">⬡ AEON <span id="identity" style="margin-left:8px;color:#7b7bff"></span><input type="file" id="upload" multiple style="margin-left:auto"></div>
-<div class="main"><div class="left" id="stream"></div><div class="mid"><h3 id="name">选择文件</h3><div id="preview"></div></div><div class="right"><div>版本历史</div><div id="history"></div><hr><div>CID</div><div id="cid" class="cid">-</div></div></div>
+<html lang="zh">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>AEON Workspace</title>
+<style>
+body{margin:0;background:#0d0f1a;color:#dfe4ff;font-family:Inter,system-ui,sans-serif}.top{height:52px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid #252a40}.main{display:grid;grid-template-columns:300px 1fr 300px;height:calc(100vh - 52px)}
+.col{overflow:auto}.left{border-right:1px solid #252a40}.right{border-left:1px solid #252a40}.head{padding:10px 12px;border-bottom:1px solid #252a40;color:#93a4ff;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+.row{padding:10px 12px;border-bottom:1px solid #1d2236;cursor:pointer}.row.active{background:#1b2035}.meta{font-size:12px;color:#8b95bf}.cid{font-family:ui-monospace,monospace;font-size:12px;color:#7bcf96}
+.mid{padding:12px}.toolbar{display:flex;gap:8px;margin-bottom:10px}.btn{padding:8px 10px;border:1px solid #384065;background:#202742;color:#fff;cursor:pointer}.preview{width:100%;min-height:62vh;background:#0b0f19;color:#dfe4ff;border:1px solid #2d3452;padding:12px;font-family:ui-monospace,monospace}
+.event{padding:10px 12px;border-bottom:1px solid #1d2236}.tag{display:inline-block;padding:2px 6px;border:1px solid #3f4a74;border-radius:999px;font-size:11px;color:#9eb0ff}
+</style>
+</head>
+<body>
+<div class="top">⬡ AEON Workspace <span id="identity" style="margin-left:8px;color:#90a0ff"></span><input type="file" id="upload" multiple style="margin-left:auto"></div>
+<div class="main">
+  <div class="col left">
+    <div class="head">数据流</div>
+    <div id="streamEvents"></div>
+    <div class="head">文件列表</div>
+    <div id="files"></div>
+  </div>
+  <div class="col mid">
+    <div id="title" style="font-size:18px;margin-bottom:8px">选择文件</div>
+    <div class="toolbar">
+      <button class="btn" onclick="saveCurrent()">保存编辑</button>
+      <button class="btn" onclick="refreshAll()">刷新</button>
+      <span id="source" class="meta"></span>
+    </div>
+    <div id="editorWrap"></div>
+  </div>
+  <div class="col right">
+    <div class="head">历史版本</div>
+    <div id="history"></div>
+  </div>
+</div>
 <script>
-let files=[], current=null;
-async function status(){const r=await fetch('/api/status');const s=await r.json();identity.textContent=s.identity_short||''}
-async function load(){const r=await fetch('/api/files');files=await r.json();stream.innerHTML=files.map(f=>`<div class="item ${current&&current.name===f.name?'active':''}" onclick='pick(${JSON.stringify(JSON.stringify(f))})'>${f.name}<br><small>${f.size_human}</small></div>`).join('')}
-async function pick(json){current=JSON.parse(json);name.textContent=current.name;cid.textContent=current.cid;if(current.mime.startsWith('image/')){preview.innerHTML=`<img src="/api/download/${encodeURIComponent(current.name)}" style="max-width:100%">`}else{const t=await (await fetch(`/api/download/${encodeURIComponent(current.name)}`)).text();preview.innerHTML=`<pre>${t.replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]))}</pre>`;}const h=await (await fetch(`/api/history/${encodeURIComponent(current.name)}`)).json();history.innerHTML=h.map(x=>`<div>v${x.version} ${new Date(x.modified).toLocaleString()}<br><span class='cid'>${x.cid}</span></div>`).join('<hr>');load();}
-upload.onchange=async e=>{const form=new FormData();for(const f of e.target.files)form.append('file',f);await fetch('/api/upload',{method:'POST',body:form});load();}
-function ws(){const w=new WebSocket(`ws://${location.host}/ws`);w.onmessage=()=>load();w.onclose=()=>setTimeout(ws,2000)}
-status();load();ws();
-</script></body></html>
+let allFiles=[],current=null,events=[];
+const esc=s=>s.replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+async function refreshStatus(){const s=await (await fetch('/api/status')).json();identity.textContent=s.identity_short||'';}
+async function refreshFiles(){allFiles=await (await fetch('/api/files')).json();files.innerHTML=allFiles.map(f=>`<div class="row ${current&&current.name===f.name?'active':''}" onclick='openFile(${JSON.stringify(JSON.stringify(f))})'><div>${f.name}</div><div class="meta">${f.size_human} · ${f.mime}</div><div class="cid">${f.cid}</div></div>`).join('');}
+function pushEvent(name){events.unshift({name,at:Date.now()});events=events.slice(0,80);streamEvents.innerHTML=events.map(e=>`<div class="event"><span class="tag">${e.name}</span><div class="meta">${new Date(e.at).toLocaleString()}</div></div>`).join('');}
+async function openFile(raw){current=JSON.parse(raw);title.textContent=current.name;source.textContent=`来源设备: ${current.source_device || '未知'}`;
+if(current.mime.startsWith('image/')){editorWrap.innerHTML=`<img src="/api/download/${encodeURIComponent(current.name)}" style="max-width:100%">`;} else {
+const txt=await (await fetch(`/api/download/${encodeURIComponent(current.name)}`)).text();
+editorWrap.innerHTML=`<textarea id="editor" class="preview">${esc(txt)}</textarea>`;
+editor.value=txt;
+}
+const h=await (await fetch(`/api/history/${encodeURIComponent(current.name)}`)).json();
+history.innerHTML=h.map(x=>`<div class="event">v${x.version}<div class="meta">${new Date(x.modified).toLocaleString()} ${x.deleted?'(删除)':''}</div><div class="cid">${x.cid}</div></div>`).join('');
+refreshFiles();}
+async function saveCurrent(){if(!current)return;const editor=document.getElementById('editor');if(!editor)return;await fetch(`/api/files/${encodeURIComponent(current.name)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:editor.value})});pushEvent('save');await refreshFiles();await openFile(JSON.stringify(current));}
+upload.onchange=async e=>{const form=new FormData();for(const f of e.target.files)form.append('file',f);await fetch('/api/upload',{method:'POST',body:form});pushEvent('upload');refreshFiles();}
+function refreshAll(){refreshStatus();refreshFiles();}
+function setupWS(){const ws=new WebSocket(`ws://${location.host}/ws`);ws.onmessage=e=>{try{const m=JSON.parse(e.data);pushEvent(m.event||'refresh');}catch{pushEvent('refresh')}refreshFiles();if(current){openFile(JSON.stringify(current));}};ws.onclose=()=>setTimeout(setupWS,1500)}
+refreshAll();setupWS();
+</script>
+</body></html>
