@@ -42,62 +42,108 @@ cd AEON-FLOW
 (cd aeon-agent && cargo test)
 ```
 
-> 建议先完成 `aeon-vm` 的构建，再体验下面的 5 分钟上手。
-
 ---
 
-## 5 分钟上手
+## 功能使用指南（按场景）
+
+> 下面按“我想做什么”来组织命令。默认你已经能在终端直接使用 `aeon-*` 命令。
+
+### 1) 编译并运行一个程序
 
 ```bash
-# 1) 查看示例程序
+# 查看示例源码
 cat aeon-vm/programs/fibonacci.asm
 
-# 2) 编译
+# 编译 .asm -> .aeon
 aeon-asm aeon-vm/programs/fibonacci.asm
 
-# 3) 运行
+# 执行
 aeon-run fibonacci.aeon
-# 预期：r2 = 55
-
-# 4) 暂停并迁移（两个终端）
-aeon-recv --session alice@laptop/conv-1 --port 9999
-aeon-send fibonacci.aeon --snap-at 5 --to 127.0.0.1:9999
-
-# 5) 在控制台里修改后继续
-aeon> set reg 0 3
-aeon> resume
-# 预期：总步数 23，r2 = 3
 ```
 
----
+适用场景：本地快速验证指令逻辑、调试寄存器结果。
 
-## 两账户协作示例
+### 2) 在中途打快照并迁移到另一端继续跑
+
+终端 A（接收端）：
+```bash
+aeon-recv --session alice@laptop/conv-1 --port 9999
+```
+
+终端 B（发送端）：
+```bash
+aeon-send fibonacci.aeon --snap-at 5 --to 127.0.0.1:9999
+```
+
+迁移后你可以在控制台继续修改状态再恢复：
+```bash
+aeon> set reg 0 3
+aeon> resume
+```
+
+适用场景：线上问题复盘、跨机器接力执行、人工审查后再放行。
+
+### 3) 用控制台交互调试虚拟机状态
 
 ```bash
-# Alice
+# 从快照载入会话
+aeon-console --session bob@desktop/conv-2 --load fibonacci.snap
+
+# 常见操作
+aeon> history         # 查看操作历史
+aeon> set reg 1 99    # 修改寄存器
+aeon> resume          # 继续执行
+```
+
+适用场景：定位 bug、手动修正参数、观察执行轨迹。
+
+### 4) 两个账户协作同一个会话
+
+Alice：
+```bash
 aeon> set reg 0 5
 aeon> say 我把倒计时改成5了
 aeon> share collab-1
+```
 
-# Bob
+Bob：
+```bash
 aeon-console --session bob@desktop/conv-2 --load fibonacci.snap
 aeon> join collab-1
 aeon> history
-aeon> set reg 1 99
 aeon> resume
 ```
 
----
+适用场景：双人排障、教学演示、交接班协同处理。
 
-## Daemon 管理示例
+### 5) 用 daemon 管理多个运行实例
 
 ```bash
+# 启动后台服务
 aeon-daemon
+
+# 提交任务
 aeon run fibonacci.aeon
+
+# 查看与管理
 aeon ps
 aeon log vm-1
 aeon resume vm-1
 ```
+
+适用场景：长任务托管、批量任务管理、统一日志查看。
+
+---
+
+## 5 分钟上手（最短路径）
+
+```bash
+cat aeon-vm/programs/fibonacci.asm
+aeon-asm aeon-vm/programs/fibonacci.asm
+aeon-run fibonacci.aeon
+```
+
+如果只想先确认环境是否可用，跑完上面三条命令即可。
 
 ---
 
@@ -107,4 +153,4 @@ aeon resume vm-1
 - 架构说明：`aeon-vm/docs/ARCHITECTURE.md`
 - 已知限制：`aeon-vm/KNOWN_LIMITATIONS.md`
 
-如果你是首次接触本项目，建议阅读顺序：**ISA → ARCHITECTURE → 示例程序 → Daemon/协作流程**。
+建议阅读顺序：**ISA → ARCHITECTURE → 示例程序 → 协作/迁移/Daemon 流程**。
