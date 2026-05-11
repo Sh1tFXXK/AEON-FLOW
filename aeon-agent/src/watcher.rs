@@ -38,6 +38,14 @@ pub fn default_sync_dirs() -> Vec<PathBuf> {
             home.join("Downloads"),
             home.join("Pictures"),
         ]
+    } else if cfg!(target_os = "macos") {
+        vec![
+            home.join("AEON"),
+            home.join("Desktop"),
+            home.join("Documents"),
+            home.join("Downloads"),
+            home.join("Pictures"),
+        ]
     } else if cfg!(target_os = "android") {
         vec![
             home.join("AEON"),
@@ -51,14 +59,29 @@ pub fn default_sync_dirs() -> Vec<PathBuf> {
     }
 }
 
-pub fn start(dirs: Vec<PathBuf>, tx: mpsc::Sender<FileEvent>) -> notify::Result<RecommendedWatcher> {
+pub fn start(
+    dirs: Vec<PathBuf>,
+    tx: mpsc::Sender<FileEvent>,
+) -> notify::Result<RecommendedWatcher> {
     let mut watcher = RecommendedWatcher::new(
         move |res: notify::Result<Event>| {
             if let Ok(event) = res {
                 let mapped = match event.kind {
-                    EventKind::Create(_) => event.paths.into_iter().map(|path| FileEvent::Created { path }).collect::<Vec<_>>(),
-                    EventKind::Modify(_) => event.paths.into_iter().map(|path| FileEvent::Modified { path }).collect::<Vec<_>>(),
-                    EventKind::Remove(_) => event.paths.into_iter().map(|path| FileEvent::Deleted { path }).collect::<Vec<_>>(),
+                    EventKind::Create(_) => event
+                        .paths
+                        .into_iter()
+                        .map(|path| FileEvent::Created { path })
+                        .collect::<Vec<_>>(),
+                    EventKind::Modify(_) => event
+                        .paths
+                        .into_iter()
+                        .map(|path| FileEvent::Modified { path })
+                        .collect::<Vec<_>>(),
+                    EventKind::Remove(_) => event
+                        .paths
+                        .into_iter()
+                        .map(|path| FileEvent::Deleted { path })
+                        .collect::<Vec<_>>(),
                     _ => vec![],
                 };
                 for m in mapped {

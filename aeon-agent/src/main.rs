@@ -34,6 +34,7 @@ async fn main() {
 
     let (tx, mut rx) = mpsc::channel(1024);
     let dirs = watcher::default_sync_dirs();
+    tracing::info!(watch_dirs = ?dirs, "starting file watcher");
     let _watcher = watcher::start(dirs.clone(), tx).expect("watcher start failed");
 
     let store = CIDStore::new(CIDStore::default_path()).expect("store");
