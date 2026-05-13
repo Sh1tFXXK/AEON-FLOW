@@ -6,6 +6,7 @@ use crate::vm::VMState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
@@ -326,7 +327,7 @@ pub fn send_request(socket_path: &Path, request: &DaemonRequest) -> Result<Strin
 }
 
 #[cfg(not(unix))]
-pub fn serve(_socket_path: &Path, _state_dir: PathBuf) -> Result<(), String> {
+pub async fn serve(_socket_path: &Path, _state_dir: PathBuf) -> Result<(), String> {
     Err("aeon-daemon currently requires Unix sockets".into())
 }
 
@@ -345,4 +346,20 @@ fn required_arg(request: &DaemonRequest, index: usize) -> Result<&str, String> {
 
 fn hex_id(id: &[u8; 32]) -> String {
     id.iter().map(|byte| format!("{:02x}", byte)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn non_unix_serve_matches_async_api() {
+        let err = super::serve(
+            &super::default_socket_path(),
+            super::default_state_dir(),
+        )
+        .await
+        .expect_err("non-Unix daemon socket support should be unavailable");
+
+        assert!(err.contains("requires Unix sockets"));
+    }
 }
