@@ -1,3 +1,10 @@
+use aeon_capture::{
+    apps::{
+        capture_vm_snapshot, list_vms, set_vm_status, AeonVmInfo, AppCapture, AppCaptureRegistry,
+        BrowserCapture, ClaudeDesktopCapture, ProcessStateCapture, VSCodeCapture,
+    },
+    hex_cid, parse_cid_hex, CaptureEngine, CaptureEntry, CaptureKind, CaptureRecord, CaptureSource,
+};
 use axum::{
     body::Body,
     extract::{
@@ -10,9 +17,14 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Component, PathBuf};
-use tokio::sync::broadcast;
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
 use tokio_util::io::ReaderStream;
+
+const DEVICE_ONLINE_TTL_MS: u64 = 120_000;
+const DEVICE_KEEP_OFFLINE_MS: u64 = 10 * 60_000;
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct FileMeta {
@@ -26,11 +38,29 @@ pub struct AppState {
     pub sync_dir: PathBuf,
     pub file_events: broadcast::Sender<String>,
     pub identity_short: String,
+    pub identity_id: [u8; 32],
+    pub device_id: [u8; 16],
+    pub capture_engine: Arc<CaptureEngine>,
+    pub app_registry: Arc<AppCaptureRegistry>,
+    pub devices: Arc<Mutex<DeviceRegistry>>,
 }
 
 #[derive(Deserialize)]
 pub struct SavePayload {
     pub content: String,
+}
+
+#[derive(Deserialize)]
+pub struct CaptureTextPayload {
+    pub text: String,
+    pub title: Option<String>,
+    pub source: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct EditEntryPayload {
+    pub text: String,
+    pub title: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -59,20 +89,173 @@ pub struct HistoryEntry {
     pub deleted: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DeviceStatus {
+    pub id: String,
     pub name: String,
     pub online: bool,
+    pub kind: String,
+    pub endpoint: Option<String>,
+    pub last_seen_ms: Option<u64>,
+    pub is_local: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerDevice {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub endpoint: Option<String>,
+    pub last_seen: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DeviceRegistry {
+    peers: HashMap<String, PeerDevice>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeviceHelloPayload {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub kind: Option<String>,
+    pub endpoint: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct CaptureProcessRequest {
+    pub pid: u32,
+    pub option_id: String,
+    pub target_device: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct CapturePayload {
+    pub cid: String,
+    pub kind: String,
+    pub kind_label: String,
+    pub title: String,
+    pub summary: Option<String>,
+    pub source: String,
+    pub source_label: String,
+    pub captured_at: u64,
+    pub size: usize,
+    pub mime: String,
+    pub app_name: Option<String>,
+    pub file_path: Option<String>,
+    pub url: Option<String>,
+    pub message_count: Option<usize>,
+    pub previous_version: Option<String>,
+    pub extra: HashMap<String, String>,
+    pub editable: bool,
+    pub raw_url: String,
+}
+
+#[derive(Serialize)]
+pub struct CaptureDetailPayload {
+    #[serde(flatten)]
+    pub entry: CapturePayload,
+    pub text: Option<String>,
+}
+
+impl DeviceRegistry {
+    pub fn upsert(&mut self, device: PeerDevice) {
+        self.peers.insert(device.id.clone(), device);
+    }
+
+    pub fn list(&mut self, now: u64) -> Vec<DeviceStatus> {
+        self.peers
+            .retain(|_, peer| now.saturating_sub(peer.last_seen) <= DEVICE_KEEP_OFFLINE_MS);
+
+        let mut devices: Vec<_> = self
+            .peers
+            .values()
+            .map(|peer| {
+                let age = now.saturating_sub(peer.last_seen);
+                DeviceStatus {
+                    id: peer.id.clone(),
+                    name: peer.name.clone(),
+                    online: age <= DEVICE_ONLINE_TTL_MS,
+                    kind: peer.kind.clone(),
+                    endpoint: peer.endpoint.clone(),
+                    last_seen_ms: Some(age),
+                    is_local: false,
+                }
+            })
+            .collect();
+        devices.sort_by(|a, b| {
+            b.online
+                .cmp(&a.online)
+                .then(a.kind.cmp(&b.kind))
+                .then(a.name.cmp(&b.name))
+        });
+        devices
+    }
 }
 
 pub async fn status(State(state): State<AppState>) -> Json<StatusPayload> {
+    let mut devices = vec![DeviceStatus {
+        id: "local".to_string(),
+        name: "This PC".to_string(),
+        online: true,
+        kind: "desktop".to_string(),
+        endpoint: None,
+        last_seen_ms: Some(0),
+        is_local: true,
+    }];
+    devices.extend(state.devices.lock().await.list(now_ms()));
+
     Json(StatusPayload {
         identity_short: state.identity_short,
-        devices: vec![DeviceStatus {
-            name: "本机".to_string(),
-            online: true,
-        }],
+        devices,
     })
+}
+
+pub async fn device_hello(
+    State(state): State<AppState>,
+    Json(payload): Json<DeviceHelloPayload>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let Some(id) = payload
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && *id != "local")
+        .map(ToOwned::to_owned)
+    else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+
+    let name = payload
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Unnamed device")
+        .to_string();
+    let kind = payload
+        .kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|kind| !kind.is_empty())
+        .unwrap_or("unknown")
+        .to_string();
+    let endpoint = payload
+        .endpoint
+        .map(|endpoint| endpoint.trim().trim_end_matches('/').to_string())
+        .filter(|endpoint| !endpoint.is_empty());
+
+    state.devices.lock().await.upsert(PeerDevice {
+        id: id.clone(),
+        name,
+        kind,
+        endpoint,
+        last_seen: now_ms(),
+    });
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "id": id
+    })))
 }
 
 pub async fn file_history(
@@ -141,19 +324,503 @@ pub async fn list_files(State(state): State<AppState>) -> Json<Vec<FileEntry>> {
     Json(entries)
 }
 
+pub async fn list_entries(State(state): State<AppState>) -> Json<Vec<CapturePayload>> {
+    let entries = state
+        .capture_engine
+        .list()
+        .await
+        .into_iter()
+        .map(capture_payload)
+        .collect();
+    Json(entries)
+}
+
+pub async fn get_entry(
+    Path(cid_hex): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<CaptureDetailPayload>, StatusCode> {
+    let cid = parse_cid_hex(&cid_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let entry = state
+        .capture_engine
+        .get(&cid)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let record = capture_record_from_entry(&entry);
+    let text = std::str::from_utf8(&entry.data).ok().map(ToOwned::to_owned);
+
+    Ok(Json(CaptureDetailPayload {
+        entry: capture_payload(record),
+        text,
+    }))
+}
+
+pub async fn edit_entry(
+    Path(cid_hex): Path<String>,
+    State(state): State<AppState>,
+    Json(payload): Json<EditEntryPayload>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let previous_cid = parse_cid_hex(&cid_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let previous = state
+        .capture_engine
+        .get(&previous_cid)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    if std::str::from_utf8(&previous.data).is_err() {
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    let mut entry = CaptureEntry::new(
+        payload.text.into_bytes(),
+        previous.kind.clone(),
+        CaptureSource::Manual,
+    );
+    if entry.cid == previous_cid {
+        return Ok(Json(serde_json::json!({
+            "ok": true,
+            "unchanged": true,
+            "cid": hex_cid(&previous_cid),
+        })));
+    }
+
+    entry.meta = previous.meta.clone();
+    entry.meta.previous_version = Some(previous_cid);
+    entry.meta.summary = None;
+    entry
+        .meta
+        .extra
+        .insert("edited_from".to_string(), hex_cid(&previous_cid));
+    entry
+        .meta
+        .extra
+        .insert("edited_at".to_string(), now_ms().to_string());
+    if let Some(title) = payload.title.filter(|title| !title.trim().is_empty()) {
+        entry.meta.title = Some(title);
+    }
+
+    stamp_capture_identity(&mut entry, &state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "cid": hex_cid(&cid),
+        "previous": hex_cid(&previous_cid),
+    })))
+}
+
+pub async fn download_entry(
+    Path(cid_hex): Path<String>,
+    State(state): State<AppState>,
+) -> Response {
+    let Ok(cid) = parse_cid_hex(&cid_hex) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    match state.capture_engine.raw(&cid).await {
+        Ok(Some(blob)) => Response::builder()
+            .header(header::CONTENT_TYPE, blob.mime)
+            .header(
+                header::CONTENT_DISPOSITION,
+                format!(
+                    "inline; filename=\"{}.bin\"",
+                    hex_cid(&cid)[..12].to_string()
+                ),
+            )
+            .body(Body::from(blob.data))
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+pub async fn capture_text(
+    State(state): State<AppState>,
+    Json(payload): Json<CaptureTextPayload>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let mut entry = CaptureEntry::new(
+        payload.text.into_bytes(),
+        CaptureKind::Text,
+        CaptureSource::Manual,
+    );
+    if let Some(title) = payload.title {
+        entry = entry.with_title(&title);
+    }
+    if let Some(source) = payload.source {
+        entry.meta.app_name = Some(source);
+    }
+    stamp_capture_identity(&mut entry, &state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"ok": true, "cid": hex_cid(&cid)})))
+}
+
+pub async fn capture_drop(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let mut captured = Vec::new();
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let filename = field.file_name().unwrap_or("dropped-content").to_string();
+        let data = field.bytes().await.map_err(|_| StatusCode::BAD_REQUEST)?;
+        if data.is_empty() {
+            continue;
+        }
+
+        let kind = aeon_capture::file::kind_from_path(std::path::Path::new(&filename), &data);
+        let mut entry =
+            CaptureEntry::new(data.to_vec(), kind, CaptureSource::DragDrop).with_title(&filename);
+        stamp_capture_identity(&mut entry, &state);
+        let cid = state
+            .capture_engine
+            .capture(entry)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        captured.push(serde_json::json!({
+            "name": filename,
+            "cid": hex_cid(&cid),
+        }));
+    }
+
+    Ok(Json(serde_json::json!({"captured": captured})))
+}
+
+pub async fn capture_apps(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let attempts = state
+        .app_registry
+        .capture_running_detailed(state.capture_engine.clone())
+        .await
+        .into_iter()
+        .map(|attempt| {
+            serde_json::json!({
+                "app": attempt.app,
+                "running": attempt.running,
+                "captured": attempt.captured.map(|cid| hex_cid(&cid)),
+                "reason": attempt.reason,
+            })
+        })
+        .collect::<Vec<_>>();
+    let captured = attempts
+        .iter()
+        .filter_map(|attempt| attempt["captured"].as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    Json(serde_json::json!({
+        "captured": captured,
+        "attempts": attempts,
+    }))
+}
+
+pub async fn list_process_entries() -> Json<Vec<crate::process::ProcessInfo>> {
+    let processes = tokio::task::spawn_blocking(crate::process::list_processes)
+        .await
+        .unwrap_or_default();
+    Json(processes)
+}
+
+pub async fn list_vm_entries() -> Json<Vec<AeonVmInfo>> {
+    Json(list_vms())
+}
+
+pub async fn capture_process(
+    Path(pid): Path<u32>,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let capture = ProcessStateCapture { pid };
+    let Some(mut entry) = capture.capture() else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    stamp_capture_identity(&mut entry, &state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"ok": true, "cid": hex_cid(&cid)})))
+}
+
+pub async fn capture_process_option(
+    State(state): State<AppState>,
+    Json(req): Json<CaptureProcessRequest>,
+) -> Json<serde_json::Value> {
+    Json(execute_capture_option(req, &state).await)
+}
+
+async fn execute_capture_option(req: CaptureProcessRequest, state: &AppState) -> serde_json::Value {
+    let result = match req.option_id.as_str() {
+        id if id.starts_with("screenshot") => capture_window_screenshot(req.pid, state).await,
+        "claude_conversation" => {
+            capture_app_entry(ClaudeDesktopCapture, state, "对话已捕获到 AEON").await
+        }
+        "vscode_workspace" | "vscode_current_file" => {
+            capture_app_entry(VSCodeCapture, state, "VS Code 工作区已捕获").await
+        }
+        "browser_tab" => capture_browser_tab(req.pid, state).await,
+        "browser_bookmarks" => capture_chrome_bookmarks(state).await,
+        "obsidian_vault" => {
+            capture_process_metadata(req.pid, state, Some("Obsidian 笔记库线索")).await
+        }
+        "metadata" => capture_process_metadata(req.pid, state, None).await,
+        id if id.starts_with("metadata_") => capture_process_metadata(req.pid, state, None).await,
+        id if id.starts_with("snapshot_") => {
+            let vm_id = id.trim_start_matches("snapshot_");
+            capture_vm_action(vm_id, state, None, "VM 快照已捕获").await
+        }
+        id if id.starts_with("migrate_") => {
+            let vm_id = id.trim_start_matches("migrate_");
+            capture_vm_action(vm_id, state, req.target_device.as_deref(), "已生成迁移快照").await
+        }
+        id if id.starts_with("pause_") => {
+            let vm_id = id.trim_start_matches("pause_");
+            match set_vm_status(vm_id, "paused") {
+                Ok(_) => capture_vm_action(vm_id, state, None, "VM 已暂停并捕获快照").await,
+                Err(err) => Err(err),
+            }
+        }
+        _ => Err("未知操作".to_string()),
+    };
+
+    match result {
+        Ok(value) => value,
+        Err(error) => serde_json::json!({"ok": false, "error": error}),
+    }
+}
+
+async fn capture_app_entry<T>(
+    capture: T,
+    state: &AppState,
+    message: &str,
+) -> Result<serde_json::Value, String>
+where
+    T: AppCapture,
+{
+    let mut entry = capture
+        .capture()
+        .ok_or_else(|| "没有找到可捕获的应用状态".to_string())?;
+    stamp_capture_identity(&mut entry, state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "cid": hex_cid(&cid),
+        "message": message,
+    }))
+}
+
+async fn capture_browser_tab(pid: u32, state: &AppState) -> Result<serde_json::Value, String> {
+    let name = crate::process::process_name(pid).unwrap_or_default();
+    let browser = if name.to_ascii_lowercase().contains("firefox") {
+        "Firefox"
+    } else {
+        "Chrome"
+    };
+    capture_app_entry(
+        BrowserCapture {
+            browser: browser.to_string(),
+        },
+        state,
+        "浏览器标签页已捕获",
+    )
+    .await
+}
+
+async fn capture_chrome_bookmarks(state: &AppState) -> Result<serde_json::Value, String> {
+    let path = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| "找不到 LOCALAPPDATA".to_string())?
+        .join("Google")
+        .join("Chrome")
+        .join("User Data")
+        .join("Default")
+        .join("Bookmarks");
+    let data = tokio::fs::read(&path)
+        .await
+        .map_err(|err| format!("读取书签失败: {err}"))?;
+    let mut entry = CaptureEntry::new(
+        data,
+        CaptureKind::Document {
+            format: "json".to_string(),
+        },
+        CaptureSource::AppApi {
+            app: "Chrome".to_string(),
+        },
+    )
+    .with_title("Chrome 书签");
+    entry.meta.file_path = Some(path.to_string_lossy().to_string());
+    entry
+        .meta
+        .extra
+        .insert("capture_mode".to_string(), "chrome-bookmarks".to_string());
+    stamp_capture_identity(&mut entry, state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "cid": hex_cid(&cid),
+        "message": "Chrome 书签已捕获",
+    }))
+}
+
+async fn capture_window_screenshot(
+    pid: u32,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let (data, width, height) = tokio::task::spawn_blocking(move || {
+        aeon_capture::screenshot::capture_window_screenshot_bytes(pid)
+    })
+    .await
+    .map_err(|err| err.to_string())??;
+    let process_name =
+        crate::process::process_name(pid).unwrap_or_else(|| format!("process-{pid}"));
+    let mut entry = CaptureEntry::new(
+        data,
+        CaptureKind::Image {
+            width,
+            height,
+            format: "png".to_string(),
+        },
+        CaptureSource::Screenshot,
+    )
+    .with_title(&format!("{process_name} 截图"));
+    entry.meta.extra.insert("pid".to_string(), pid.to_string());
+    entry
+        .meta
+        .extra
+        .insert("capture_mode".to_string(), "window-screenshot".to_string());
+    stamp_capture_identity(&mut entry, state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "cid": hex_cid(&cid),
+        "message": "截图已捕获",
+    }))
+}
+
+async fn capture_process_metadata(
+    pid: u32,
+    state: &AppState,
+    title: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let metadata = crate::process::process_metadata(pid).ok_or_else(|| "进程不存在".to_string())?;
+    let data = serde_json::to_vec_pretty(&metadata).map_err(|err| err.to_string())?;
+    let name = metadata
+        .get("name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("process");
+    let title = title
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{name} 进程信息"));
+    let mut entry = CaptureEntry::new(data, CaptureKind::ProcessState, CaptureSource::Manual)
+        .with_title(&title)
+        .with_app("Process");
+    entry.meta.extra.insert("pid".to_string(), pid.to_string());
+    entry
+        .meta
+        .extra
+        .insert("capture_mode".to_string(), "process-metadata".to_string());
+    stamp_capture_identity(&mut entry, state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "cid": hex_cid(&cid),
+        "message": "进程信息已捕获",
+    }))
+}
+
+async fn capture_vm_action(
+    vm_id: &str,
+    state: &AppState,
+    target_device: Option<&str>,
+    message: &str,
+) -> Result<serde_json::Value, String> {
+    let mut entry = capture_vm_snapshot(vm_id)?;
+    if let Some(target) = target_device.filter(|target| !target.trim().is_empty()) {
+        entry.meta.title = Some(format!("VM 迁移快照 {vm_id} -> {target}"));
+        entry
+            .meta
+            .extra
+            .insert("migration_target".to_string(), target.to_string());
+    }
+    stamp_capture_identity(&mut entry, state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "cid": hex_cid(&cid),
+        "message": message,
+        "vm_id": vm_id,
+        "target": target_device,
+    }))
+}
+
+pub async fn capture_vm(
+    Path(vm_id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let mut entry = capture_vm_snapshot(&vm_id).map_err(|err| {
+        tracing::warn!("capture vm {vm_id} failed: {err}");
+        StatusCode::NOT_FOUND
+    })?;
+    stamp_capture_identity(&mut entry, &state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"ok": true, "cid": hex_cid(&cid)})))
+}
+
 pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     ws.on_upgrade(|socket| handle_ws(socket, state))
 }
 
 async fn handle_ws(mut socket: WebSocket, state: AppState) {
-    let mut rx = state.file_events.subscribe();
-    while let Ok(event_name) = rx.recv().await {
+    let mut file_rx = state.file_events.subscribe();
+    let mut capture_rx = state.capture_engine.subscribe();
+
+    loop {
+        let payload = tokio::select! {
+            Ok(event_name) = file_rx.recv() => serde_json::json!({
+                "type": "refresh",
+                "event": event_name,
+                "at": now_ms(),
+            }),
+            Ok(entry) = capture_rx.recv() => {
+                let record = capture_record_from_entry(&entry);
+                serde_json::json!({
+                    "type": "capture",
+                    "entry": capture_payload(record),
+                    "at": now_ms(),
+                })
+            },
+            else => break,
+        };
+
         if socket
-            .send(Message::Text(format!(
-                r#"{{"type":"refresh","event":"{}","at":{}}}"#,
-                event_name,
-                now_ms()
-            )))
+            .send(Message::Text(payload.to_string()))
             .await
             .is_err()
         {
@@ -208,6 +875,9 @@ pub async fn upload_file(
         tokio::fs::write(&dest, &data)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let mime = mime_guess::from_path(&dest)
+            .first_or_octet_stream()
+            .to_string();
         let cid = blake3::hash(&data).to_hex()[..8].to_string();
         uploaded.push(serde_json::json!({"name":safe_name,"size":data.len(),"cid":cid}));
         tracing::info!("Uploaded: {} ({} bytes)", filename, data.len());
@@ -222,6 +892,15 @@ pub async fn upload_file(
             },
         )
         .await;
+        let mut entry = CaptureEntry::new(
+            data.to_vec(),
+            capture_kind_for_file(&safe_name, &mime, &data),
+            CaptureSource::Manual,
+        )
+        .with_title(&safe_name);
+        entry.meta.file_path = Some(dest.to_string_lossy().to_string());
+        stamp_capture_identity(&mut entry, &state);
+        let _ = state.capture_engine.capture(entry).await;
     }
     let _ = state.file_events.send("upload".to_string());
     Ok(Json(serde_json::json!({"uploaded":uploaded})))
@@ -286,6 +965,17 @@ pub async fn save_file(
         },
     )
     .await;
+    let mut entry = CaptureEntry::new(
+        payload.content.as_bytes().to_vec(),
+        capture_kind_for_file(&safe_name, "text/plain", payload.content.as_bytes()),
+        CaptureSource::FileWatch {
+            path: path.to_string_lossy().to_string(),
+        },
+    )
+    .with_title(&safe_name);
+    entry.meta.file_path = Some(path.to_string_lossy().to_string());
+    stamp_capture_identity(&mut entry, &state);
+    let _ = state.capture_engine.capture(entry).await;
     let _ = state.file_events.send("save".to_string());
     Ok(Json(serde_json::json!({"ok":true,"cid":cid})))
 }
@@ -299,6 +989,19 @@ pub fn create_router(state: AppState) -> Router {
         .route("/", get(index_page))
         .route("/ws", get(ws_handler))
         .route("/api/status", get(status))
+        .route("/api/devices/hello", post(device_hello))
+        .route("/api/entries", get(list_entries))
+        .route("/api/entry/:cid", get(get_entry))
+        .route("/api/entry/:cid/edit", post(edit_entry))
+        .route("/api/entry/:cid/raw", get(download_entry))
+        .route("/api/processes", get(list_process_entries))
+        .route("/api/vms", get(list_vm_entries))
+        .route("/api/capture/text", post(capture_text))
+        .route("/api/capture/drop", post(capture_drop))
+        .route("/api/capture/apps", post(capture_apps))
+        .route("/api/capture-process", post(capture_process_option))
+        .route("/api/capture/process/:pid", post(capture_process))
+        .route("/api/capture/vm/:vm_id", post(capture_vm))
         .route("/api/files", get(list_files))
         .route("/api/history/:filename", get(file_history))
         .route("/api/upload", post(upload_file))
@@ -306,6 +1009,191 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/files/:filename", delete(delete_file))
         .route("/api/files/:filename", post(save_file))
         .with_state(state)
+}
+
+fn capture_payload(record: CaptureRecord) -> CapturePayload {
+    let cid = hex_cid(&record.cid);
+    CapturePayload {
+        raw_url: format!("/api/entry/{cid}/raw"),
+        cid,
+        kind: record.kind.key().to_string(),
+        kind_label: kind_label(&record.kind).to_string(),
+        title: record
+            .meta
+            .title
+            .clone()
+            .unwrap_or_else(|| fallback_title(&record)),
+        summary: record.meta.summary.clone(),
+        source: source_key(&record.source).to_string(),
+        source_label: source_label(&record.source),
+        captured_at: record.captured_at,
+        size: record.size,
+        mime: record.mime,
+        app_name: record.meta.app_name.clone(),
+        file_path: record.meta.file_path.clone(),
+        url: record.meta.url.clone(),
+        message_count: record.meta.message_count,
+        previous_version: record.meta.previous_version.map(|cid| hex_cid(&cid)),
+        extra: record.meta.extra.clone(),
+        editable: is_editable_kind(&record.kind),
+    }
+}
+
+fn capture_record_from_entry(entry: &CaptureEntry) -> CaptureRecord {
+    CaptureRecord {
+        cid: entry.cid,
+        kind: entry.kind.clone(),
+        meta: entry.meta.clone(),
+        source: entry.source.clone(),
+        captured_at: entry.captured_at,
+        by: entry.by,
+        device: entry.device,
+        size: entry.data.len(),
+        mime: entry.mime(),
+    }
+}
+
+fn fallback_title(record: &CaptureRecord) -> String {
+    match &record.kind {
+        CaptureKind::Conversation => {
+            format!("对话（{} 条消息）", record.meta.message_count.unwrap_or(0))
+        }
+        CaptureKind::Code { language } => format!("{language} 代码"),
+        CaptureKind::Image { width, height, .. } => format!("图片 {width}x{height}"),
+        CaptureKind::Webpage => record
+            .meta
+            .url
+            .clone()
+            .unwrap_or_else(|| "网页".to_string()),
+        CaptureKind::Clipboard => "剪贴板".to_string(),
+        CaptureKind::Text => "文本".to_string(),
+        CaptureKind::Document { format } => format!("{format} 文档"),
+        CaptureKind::ProcessState => "进程状态".to_string(),
+        CaptureKind::VmSnapshot => "AEON VM 快照".to_string(),
+        CaptureKind::Blob { .. } => "二进制内容".to_string(),
+    }
+}
+
+fn kind_label(kind: &CaptureKind) -> &'static str {
+    match kind {
+        CaptureKind::Conversation => "对话",
+        CaptureKind::Code { .. } => "代码",
+        CaptureKind::Text => "文本",
+        CaptureKind::Image { .. } => "图片",
+        CaptureKind::Webpage => "网页",
+        CaptureKind::Document { .. } => "文档",
+        CaptureKind::ProcessState => "进程",
+        CaptureKind::VmSnapshot => "VM 快照",
+        CaptureKind::Clipboard => "剪贴板",
+        CaptureKind::Blob { .. } => "文件",
+    }
+}
+
+fn is_editable_kind(kind: &CaptureKind) -> bool {
+    matches!(
+        kind,
+        CaptureKind::Conversation
+            | CaptureKind::Code { .. }
+            | CaptureKind::Text
+            | CaptureKind::Webpage
+            | CaptureKind::ProcessState
+            | CaptureKind::Clipboard
+    )
+}
+
+fn source_key(source: &CaptureSource) -> &'static str {
+    match source {
+        CaptureSource::DragDrop => "DragDrop",
+        CaptureSource::Clipboard => "Clipboard",
+        CaptureSource::Screenshot => "Screenshot",
+        CaptureSource::FileWatch { .. } => "FileWatch",
+        CaptureSource::AppApi { .. } => "AppApi",
+        CaptureSource::ShareMenu => "ShareMenu",
+        CaptureSource::Manual => "Manual",
+        CaptureSource::PeerSync { .. } => "PeerSync",
+    }
+}
+
+fn source_label(source: &CaptureSource) -> String {
+    match source {
+        CaptureSource::DragDrop => "拖拽".to_string(),
+        CaptureSource::Clipboard => "剪贴板".to_string(),
+        CaptureSource::Screenshot => "截图".to_string(),
+        CaptureSource::FileWatch { path } => format!("文件监控: {path}"),
+        CaptureSource::AppApi { app } => app.clone(),
+        CaptureSource::ShareMenu => "分享菜单".to_string(),
+        CaptureSource::Manual => "手动捕获".to_string(),
+        CaptureSource::PeerSync { device_name } => format!("设备同步: {device_name}"),
+    }
+}
+
+fn stamp_capture_identity(entry: &mut CaptureEntry, state: &AppState) {
+    entry.by = state.identity_id;
+    entry.device = state.device_id;
+}
+
+fn capture_kind_for_file(name: &str, mime: &str, data: &[u8]) -> CaptureKind {
+    let lower = name.to_ascii_lowercase();
+    if mime.starts_with("image/") {
+        let format = lower
+            .rsplit_once('.')
+            .map(|(_, ext)| ext.to_string())
+            .unwrap_or_else(|| mime.trim_start_matches("image/").to_string());
+        let (width, height) = aeon_capture::screenshot::image_dimensions(data).unwrap_or((0, 0));
+        return CaptureKind::Image {
+            width,
+            height,
+            format,
+        };
+    }
+
+    if let Some(language) = language_from_filename(&lower) {
+        return CaptureKind::Code {
+            language: language.to_string(),
+        };
+    }
+
+    if mime.starts_with("text/") {
+        if let Ok(text) = std::str::from_utf8(data) {
+            return aeon_capture::clipboard::detect_text_kind(text);
+        }
+        return CaptureKind::Text;
+    }
+
+    if lower.ends_with(".pdf") {
+        return CaptureKind::Document {
+            format: "pdf".to_string(),
+        };
+    }
+    if lower.ends_with(".docx") || lower.ends_with(".doc") {
+        return CaptureKind::Document {
+            format: "word".to_string(),
+        };
+    }
+
+    CaptureKind::Blob {
+        mime: mime.to_string(),
+    }
+}
+
+fn language_from_filename(name: &str) -> Option<&'static str> {
+    if name.ends_with(".rs") {
+        Some("Rust")
+    } else if name.ends_with(".py") {
+        Some("Python")
+    } else if name.ends_with(".js")
+        || name.ends_with(".ts")
+        || name.ends_with(".jsx")
+        || name.ends_with(".tsx")
+    {
+        Some("JavaScript")
+    } else if name.ends_with(".java") {
+        Some("Java")
+    } else if name.ends_with(".go") {
+        Some("Go")
+    } else {
+        None
+    }
 }
 
 fn history_path(sync_dir: &PathBuf, name: &str) -> PathBuf {
@@ -412,4 +1300,52 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_registry_reports_online_and_offline_peers() {
+        let now = 1_000_000;
+        let mut registry = DeviceRegistry::default();
+        registry.upsert(PeerDevice {
+            id: "android-1".to_string(),
+            name: "Android Phone".to_string(),
+            kind: "android".to_string(),
+            endpoint: None,
+            last_seen: now - 1_000,
+        });
+        registry.upsert(PeerDevice {
+            id: "tablet-1".to_string(),
+            name: "Tablet".to_string(),
+            kind: "android".to_string(),
+            endpoint: None,
+            last_seen: now - DEVICE_ONLINE_TTL_MS - 1,
+        });
+
+        let devices = registry.list(now);
+        let phone = devices.iter().find(|d| d.id == "android-1").unwrap();
+        let tablet = devices.iter().find(|d| d.id == "tablet-1").unwrap();
+
+        assert!(phone.online);
+        assert!(!phone.is_local);
+        assert!(!tablet.online);
+    }
+
+    #[test]
+    fn device_registry_drops_very_old_peers() {
+        let now = 1_000_000;
+        let mut registry = DeviceRegistry::default();
+        registry.upsert(PeerDevice {
+            id: "old-phone".to_string(),
+            name: "Old Phone".to_string(),
+            kind: "android".to_string(),
+            endpoint: None,
+            last_seen: now - DEVICE_KEEP_OFFLINE_MS - 1,
+        });
+
+        assert!(registry.list(now).is_empty());
+    }
 }

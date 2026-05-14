@@ -736,11 +736,28 @@ halt
         let mut daemon = DaemonState::new(dir.clone()).unwrap();
         let id = daemon.run_program(&program_path).unwrap();
         assert_eq!(daemon.ps().len(), 1);
+        let exported = daemon.export_snapshot(&id).unwrap();
+        assert_eq!(exported.info.id, id);
+        assert!(exported.snapshot_path.ends_with("vm-1.snap"));
+        assert_eq!(
+            Snapshot::from_bytes(&exported.bytes).unwrap().program_id(),
+            exported.snapshot.program_id()
+        );
         daemon.pause(&id).unwrap();
         daemon.resume(&id).unwrap();
 
         let lines = daemon.log(&id).unwrap();
         assert!(lines.iter().any(|line| line.contains("Checkpoint")));
+
+        let inspected = DaemonState::inspect(dir.clone()).unwrap();
+        let inspected_lines = inspected.log(&id).unwrap();
+        assert!(
+            !inspected_lines
+                .iter()
+                .any(|line| line.contains("DaemonRestart")),
+            "inspect should be read-only: {:?}",
+            inspected_lines
+        );
 
         let recovered = DaemonState::recover(dir.clone()).unwrap();
         assert_eq!(recovered.ps().len(), 1);

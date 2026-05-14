@@ -1,0 +1,97 @@
+-- Merging decision tree log ---
+manifest
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:1:1-39:12
+INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:1:1-39:12
+INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:1:1-39:12
+INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:1:1-39:12
+	package
+		INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml
+	android:versionName
+		INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml
+	android:versionCode
+		INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml
+	xmlns:android
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:1:11-69
+uses-permission#android.permission.INTERNET
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:2:5-67
+	android:name
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:2:22-64
+uses-permission#android.permission.READ_MEDIA_IMAGES
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:3:5-76
+	android:name
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:3:22-73
+uses-permission#android.permission.READ_EXTERNAL_STORAGE
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:4:5-107
+	android:maxSdkVersion
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:4:78-104
+	android:name
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:4:22-77
+application
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:6:5-38:19
+INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:6:5-38:19
+	android:extractNativeLibs
+		INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml
+	android:label
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:8:9-29
+	android:allowBackup
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:7:9-35
+	android:theme
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:10:9-40
+	android:usesCleartextTraffic
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:9:9-44
+activity#flow.aeon.capture.ShareReceiverActivity
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:11:9-24:20
+	android:exported
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:13:13-36
+	android:name
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:12:13-50
+intent-filter#action:name:android.intent.action.SEND+category:name:android.intent.category.DEFAULT+data:mimeType:*/*
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:14:13-18:29
+action#android.intent.action.SEND
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:15:17-69
+	android:name
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:15:25-66
+category#android.intent.category.DEFAULT
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:16:17-76
+	android:name
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:16:27-73
+data
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:17:17-48
+	android:mimeType
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:17:23-45
+intent-filter#action:name:android.intent.action.SEND_MULTIPLE+category:name:android.intent.category.DEFAULT+data:mimeType:*/*
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:19:13-23:29
+action#android.intent.action.SEND_MULTIPLE
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:20:17-78
+	android:name
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:20:25-75
+activity#flow.aeon.capture.MainActivity
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:26:9-33:20
+	android:exported
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:28:13-36
+	android:name
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:27:13-41
+intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:29:13-32:29
+action#android.intent.action.MAIN
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:30:17-69
+	android:name
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:30:25-66
+category#android.intent.category.LAUNCHER
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:31:17-77
+	android:name
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:31:27-74
+service#flow.aeon.capture.PhotoWatcherService
+ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:35:9-37:40
+	android:exported
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:37:13-37
+	android:name
+		ADDED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml:36:13-48
+uses-sdk
+INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml
+INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml
+	android:targetSdkVersion
+		INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from E:\project\AEON-FLOW\aeon-android\app\src\main\AndroidManifest.xml

@@ -8,10 +8,12 @@
 - Terminal A: `cd aeon-agent && AEON_AGENT_LISTEN=0.0.0.0:8787 cargo run`
 - Terminal B: `cd aeon-agent && AEON_AGENT_LISTEN=0.0.0.0:8788 AEON_AGENT_PEER=127.0.0.1:8787 cargo run`
 
-## 3. HTTP UI
+## 3. Capture UI
 - `cd aeon-sync && cargo run`
 - open `http://localhost:8080`
-- upload file and verify history in right pane.
+- copy text on Windows and verify it appears in the capture stream.
+- drag a file into the browser and verify it appears as a capture entry.
+- use `POST /api/capture/text` for API smoke tests.
 
 ## 4. Android Termux
 - `pkg install rust git`
@@ -29,6 +31,12 @@
 ## 6. Reconnect auto-peering
 - use `AEON_AGENT_PEERS="127.0.0.1:8787,127.0.0.1:8788"`
 - agent retries missing peers every 5 seconds.
+
+## 8. Android share app
+- Open `aeon-android/` in Android Studio.
+- Set the server endpoint to the LAN URL shown by `aeon-sync`, for example `http://192.168.1.8:8080`.
+- Share text or images from any Android app to `AEON`.
+- Verify the entry appears in the capture stream on Windows.
 
 
 ## 7. Tombstone semantics
