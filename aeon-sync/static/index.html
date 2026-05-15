@@ -62,7 +62,7 @@ button{cursor:pointer}
 .metaGrid div:nth-child(odd){color:#c8c3ad}.cid{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere;color:var(--green)}
 .editor{width:100%;min-height:360px;resize:vertical;border:1px solid var(--line);border-radius:6px;background:#0b0c09;color:var(--text);padding:14px;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
 .processPage{height:100%;display:flex;flex-direction:column;min-height:0}
-.processToolbar{display:grid;grid-template-columns:1fr auto auto;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line);background:#12140f}
+.processToolbar{display:grid;grid-template-columns:1fr auto auto auto;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line);background:#12140f}
 .processList{overflow:auto;min-height:0}
 .procGroup{border-bottom:1px solid var(--line)}
 .procGroupTitle{padding:10px 16px 6px;font-size:12px;letter-spacing:.02em;font-weight:700;color:var(--muted)}
@@ -88,7 +88,15 @@ button{cursor:pointer}
 .captureSuccess{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--green)}
 .captureError{color:var(--red)}
 .devicesPage{padding:18px;max-width:760px}
-.deviceRow{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:12px 0}
+.deviceRow{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:12px 0;gap:14px;min-width:0}
+.deviceRow>div{min-width:0}
+.connectBlock{border:1px solid var(--line);border-radius:8px;background:var(--panel);margin:12px 0 18px;overflow:hidden}
+.connectBlock .procGroupTitle{padding:10px 12px;border-bottom:1px solid var(--line)}
+.connectRow{display:grid;grid-template-columns:minmax(180px,220px) minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 12px;border-top:1px solid #292c23;min-width:0}
+.connectRow:first-child{border-top:0}
+.connectRow .badge{min-width:0;width:100%;justify-content:flex-start;overflow:hidden;text-overflow:ellipsis}
+.connectUrl{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--green);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.connectHint{color:var(--muted);font-size:12px;margin:0 0 10px}
 .dropOverlay{position:fixed;inset:0;background:rgba(16,17,15,.88);display:none;place-items:center;z-index:8;border:2px dashed var(--green);color:var(--green);font-size:22px;font-weight:750}
 .dropOverlay.show{display:grid}
 .toast{position:fixed;right:18px;bottom:18px;z-index:9;max-width:min(420px,calc(100vw - 36px));padding:12px 14px;border:1px solid var(--line);border-radius:6px;background:#202319;color:var(--text);box-shadow:0 14px 40px rgba(0,0,0,.28);display:none}
@@ -144,7 +152,8 @@ button{cursor:pointer}
     <div class="processToolbar">
       <input class="search" id="procSearch" placeholder="搜索进程、PID、路径">
       <button class="iconBtn secondaryRefresh" onclick="loadProcesses()">刷新</button>
-      <button class="iconBtn primary" onclick="captureApps()">捕获所有已知应用</button>
+      <button class="iconBtn" onclick="captureProcesses()">捕获进程清单</button>
+      <button class="iconBtn primary" onclick="captureAll()">捕获全机状态</button>
     </div>
     <div class="processList" id="processList"></div>
   </div>
@@ -153,6 +162,11 @@ button{cursor:pointer}
 <section class="tabContent" id="tab-devices">
   <div class="devicesPage">
     <h2>设备</h2>
+    <div class="connectHint">Android 端会通过 AEON LAN Discovery 自动找到桌面；跨网络时使用自研 AEON Relay。</div>
+    <div class="connectBlock">
+      <div class="procGroupTitle">连接地址</div>
+      <div id="connectList"></div>
+    </div>
     <div id="deviceList" class="processList"></div>
   </div>
 </section>
@@ -170,7 +184,7 @@ button{cursor:pointer}
   </div>
 </div>
 <script>
-let entries=[],activeKind='all',currentCid=null,activeDetail=null,allProcesses=[],vms=[],devices=[];
+let entries=[],activeKind='all',currentCid=null,activeDetail=null,allProcesses=[],vms=[],devices=[],connectUrls=[];
 let toastTimer=null;
 const esc=s=>(s===null||s===undefined?'':String(s)).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const fmtTime=ms=>{const d=Date.now()-ms;if(d<60000)return'刚刚';if(d<3600000)return`${Math.floor(d/60000)}分钟前`;if(d<86400000)return`${Math.floor(d/3600000)}小时前`;return new Date(ms).toLocaleString();};
@@ -180,6 +194,7 @@ const humanMem=mb=>mb>=1024?(mb/1024).toFixed(1)+' GB':mb+' MB';
 async function refreshStatus(){
   const s=await fetch('/api/status').then(r=>r.json());
   devices=s.devices||[];
+  connectUrls=s.connect_urls||[];
   identity.textContent=s.identity_short?`ID ${s.identity_short}`:'';
   renderDevices();
 }
@@ -335,7 +350,7 @@ function showCaptureResult(el,data,label){
 async function selectTargetDevice(){
   await refreshStatus();
   const online=devices.filter(d=>d.online&&!d.is_local&&d.id!=='local');
-  if(!online.length){alert('没有在线的其他设备，请在手机端打开 AEON Capture，确认 endpoint 指向这台电脑的 LAN 地址。');return null;}
+  if(!online.length){alert('没有在线的其他设备。请在手机端打开 AEON Capture，并使用 AUTO FIND AEON 通过 AEON LAN Discovery 自动连接。');return null;}
   if(online.length===1)return online[0].id;
   const names=online.map((d,i)=>`${i+1}. ${d.name}`).join('\n');
   const idx=prompt(`选择目标设备：\n${names}\n\n输入序号:`);
@@ -345,8 +360,19 @@ async function selectTargetDevice(){
 
 function renderDevices(){
   if(!deviceList)return;
+  renderConnectUrls();
   deviceList.innerHTML=(devices||[]).map(d=>`<div class="deviceRow"><div><strong>${esc(d.name)}</strong><div class="procExe">${esc(d.kind||'device')} · ${esc(d.id||'')}${d.last_seen_ms&&!d.is_local?` · ${Math.round(d.last_seen_ms/1000)}s ago`:''}</div></div><span class="badge">${d.online?'在线':'离线'}</span></div>`).join('')||'<div class="empty">没有设备</div>';
 }
+function renderConnectUrls(){
+  if(!connectList)return;
+  connectList.innerHTML=(connectUrls||[]).map(c=>`<div class="connectRow"><span class="badge">${esc(c.label)}${c.remote?' · Relay':''}</span><span class="connectUrl">${esc(c.url)}</span><button class="captureBtn btnMeta" data-copy-url="${esc(c.url)}">复制</button></div>`).join('')||'<div class="empty">没有连接地址</div>';
+}
+document.addEventListener('click',e=>{
+  const btn=e.target.closest('[data-copy-url]');
+  if(!btn)return;
+  navigator.clipboard?.writeText(btn.dataset.copyUrl);
+  showToast('连接地址已复制');
+});
 async function openVmPicker(){
   vmModal.classList.add('show');
   vmList.innerHTML='<div class="empty" style="height:160px">正在读取 AEON VM</div>';
@@ -372,6 +398,19 @@ async function captureVm(id){
   showToast(`已捕获 VM 快照 ${id}`);
   await openEntry(result.cid);
 }
+async function captureProcesses(){
+  const result=await fetch('/api/capture/processes',{method:'POST'}).then(r=>r.json());
+  await refreshEntries();
+  if(result.ok&&result.cid){showToast(`已捕获 ${result.process_count||0} 个进程`);setActiveKind('ProcessState');await openEntry(result.cid);}
+  else showToast(result.error||'进程清单捕获失败');
+}
+async function captureAll(){
+  const result=await fetch('/api/capture/all',{method:'POST'}).then(r=>r.json());
+  const captured=result.captured||[];
+  await refreshEntries();
+  if(captured.length){showToast(`已捕获全机状态：${result.process_count||0} 个进程，${Math.max(captured.length-1,0)} 个深度应用`);setActiveKind('all');await openEntry(captured[0]);}
+  else showToast((result.errors&&result.errors[0])||'全机状态捕获失败');
+}
 async function captureApps(){
   const result=await fetch('/api/capture/apps',{method:'POST'}).then(r=>r.json());
   const captured=result.captured||[];
@@ -391,6 +430,7 @@ procSearch.oninput=filterProcesses;
 vmSearch.oninput=renderVms;
 function setupWS(){const ws=new WebSocket(`ws://${location.host}/ws`);ws.onmessage=e=>{try{const msg=JSON.parse(e.data);if(msg.type==='capture'&&msg.entry){entries=[msg.entry,...entries.filter(x=>x.cid!==msg.entry.cid)];renderStream();return;}}catch{}refreshEntries();};ws.onclose=()=>setTimeout(setupWS,1500);}
 refreshStatus();refreshEntries();setupWS();
+setInterval(()=>refreshStatus().catch(()=>{}),10000);
 </script>
 </body>
 </html>

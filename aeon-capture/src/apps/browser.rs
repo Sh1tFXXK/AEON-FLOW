@@ -2,8 +2,8 @@ use super::util::process_exists;
 use super::AppCapture;
 use crate::capture::{CaptureEntry, CaptureKind, CaptureSource};
 use crate::engine::CaptureEngine;
-use rusqlite::Connection;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 
 pub struct BrowserCapture {
@@ -112,19 +112,38 @@ fn query_latest_history(path: &Path, sql: &str) -> Option<BrowserPage> {
             .as_nanos()
     ));
     std::fs::copy(path, &temp).ok()?;
-    let result = (|| {
-        let conn = Connection::open(&temp).ok()?;
-        let mut stmt = conn.prepare(sql).ok()?;
-        stmt.query_row([], |row| {
-            Ok(BrowserPage {
-                title: row
-                    .get::<_, Option<String>>(0)?
-                    .unwrap_or_else(|| "网页".to_string()),
-                url: row.get(1)?,
-            })
-        })
-        .ok()
-    })();
+    let result = query_sqlite_latest_page(&temp, sql);
     let _ = std::fs::remove_file(temp);
     result
+}
+
+fn query_sqlite_latest_page(path: &Path, sql: &str) -> Option<BrowserPage> {
+    let output = Command::new("sqlite3")
+        .arg("-readonly")
+        .arg("-separator")
+        .arg("\t")
+        .arg(path)
+        .arg(sql)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.lines().next()?.trim();
+    let (title, url) = line.split_once('\t')?;
+    let url = url.trim();
+    if url.is_empty() {
+        return None;
+    }
+
+    Some(BrowserPage {
+        title: if title.trim().is_empty() {
+            "Webpage".to_string()
+        } else {
+            title.trim().to_string()
+        },
+        url: url.to_string(),
+    })
 }

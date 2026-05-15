@@ -1,0 +1,21 @@
+AEON LAN IPs: 192.168.0.44,192.168.71.240
+monitoring app: Claude Desktop
+AEON embedded Relay started
+Relay space: home
+Relay store: C:\Users\Administrator\.aeon-relay
+Relay URL:   http://0.0.0.0:8090
+AEON Relay pull enabled: http://127.0.0.1:8090 (space: home)
+AEON LAN discovery listening on udp://0.0.0.0:8091
+
+AEON Flow capture service started
+----------------------------------------
+Identity ID: 7c56b052
+Sync dir:    C:\Users\Administrator\AEON
+Local:       http://localhost:8080
+LAN:         http://192.168.0.44:8080
+LAN 2:       http://192.168.71.240:8080
+AEON Relay Local: http://localhost:8090
+AEON Relay LAN: http://192.168.0.44:8090
+AEON Relay LAN 2: http://192.168.71.240:8090
+AEON Relay:  http://127.0.0.1:8090
+----------------------------------------

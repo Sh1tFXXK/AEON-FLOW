@@ -1,56 +1,85 @@
-# AEON Flow
+# AEON VM
 
-> 程序可以在任意时刻暂停，迁移到另一台机器，在迁移过程中被检查和修改，然后继续执行。
+`aeon-vm` 是 AEON Flow 的可运行状态层：程序可以被暂停、快照、检查、修改，然后恢复或迁移。捕获层负责“接住正在做的事”，VM 层负责让被 AEON 管理的进程具备真正可恢复的运行状态。
 
-## 安装
+完整桌面系统请从仓库根目录统一启动：
 
-```bash
-git clone <repo>
-cd AEON-FLOW/aeon-vm
+```powershell
+.\scripts\aeon.ps1
+```
+
+本 README 只覆盖 VM 工具本身。
+
+## 构建
+
+```powershell
+cd aeon-vm
 cargo build --release
-# 把 target/release/ 加入 PATH
 ```
 
 ## 5 分钟上手
 
-```bash
-# 1. 写一个程序
-cat programs/fibonacci.asm
+编译并运行示例程序：
 
-# 2. 编译
-aeon-asm programs/fibonacci.asm
-
-# 3. 运行
-aeon-run fibonacci.aeon
-# r2 = 55
-
-# 4. 暂停并迁移（两个终端）
-aeon-recv --session alice@laptop/conv-1   # 终端 1
-aeon-send fibonacci.aeon --snap-at 5 --to 127.0.0.1:9999  # 终端 2
-
-# 5. 在控制台里修改后继续
-aeon> set reg 0 3
-aeon> resume
-# 总步数 23，r2 = 3
+```powershell
+cargo run --bin aeon-asm -- programs\fibonacci.asm -o fibonacci.aeon
+cargo run --bin aeon-run -- fibonacci.aeon
 ```
 
-## 两账户协作
+运行到指定步数并保存快照：
 
-```bash
-# Alice
-aeon> share collab-1
-
-# Bob
-aeon> join collab-1
-aeon> history       # 看到 Alice 的操作
-aeon> set reg 1 99
-aeon> resume        # 两人改动合并生效
+```powershell
+cargo run --bin aeon-run -- fibonacci.aeon --snap-at 5
 ```
 
-## 指令集
+从快照恢复：
 
-见 docs/ISA.md
+```powershell
+cargo run --bin aeon-run -- fibonacci.aeon --restore fibonacci.snap
+```
 
-## 已知限制
+## 迁移/接收
 
-见 KNOWN_LIMITATIONS.md
+接收端：
+
+```powershell
+cargo run --bin aeon-recv -- fibonacci.aeon --port 9999
+```
+
+发送端：
+
+```powershell
+cargo run --bin aeon-send -- fibonacci.aeon --snap-at 5 --to 127.0.0.1:9999
+```
+
+## 控制台检查
+
+```powershell
+cargo run --bin aeon-console -- --load fibonacci.snap
+```
+
+常用命令：
+
+```text
+history
+regs
+set reg 0 3
+resume
+```
+
+## Daemon
+
+AEON daemon 用于托管多个 VM 运行实例。桌面进程面板会把 AEON VM 管理的进程识别为可迁移/可快照对象。
+
+```powershell
+cargo run --bin aeon-daemon
+cargo run --bin aeon -- ps
+```
+
+## 文档
+
+- [指令集](docs/ISA.md)
+- [架构](docs/ARCHITECTURE.md)
+- [Forth 原型](docs/FORTH.md)
+- [语言选择](docs/LANGUAGE_CHOICE.md)
+- [已知限制](KNOWN_LIMITATIONS.md)

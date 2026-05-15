@@ -4,14 +4,15 @@ use aeon_capture::{
         BrowserCapture, ClaudeDesktopCapture, ProcessStateCapture, VSCodeCapture,
     },
     hex_cid, parse_cid_hex, CaptureEngine, CaptureEntry, CaptureKind, CaptureRecord, CaptureSource,
+    CID,
 };
 use axum::{
     body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Multipart, Path, State,
+        DefaultBodyLimit, Multipart, Path, State,
     },
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Json, Response},
     routing::{delete, get, post},
     Router,
@@ -25,6 +26,7 @@ use tokio_util::io::ReaderStream;
 
 const DEVICE_ONLINE_TTL_MS: u64 = 120_000;
 const DEVICE_KEEP_OFFLINE_MS: u64 = 10 * 60_000;
+const MAX_CAPTURE_UPLOAD_BYTES: usize = 1024 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct FileMeta {
@@ -43,6 +45,7 @@ pub struct AppState {
     pub capture_engine: Arc<CaptureEngine>,
     pub app_registry: Arc<AppCaptureRegistry>,
     pub devices: Arc<Mutex<DeviceRegistry>>,
+    pub connect_urls: Vec<ConnectUrl>,
 }
 
 #[derive(Deserialize)]
@@ -79,6 +82,7 @@ pub struct FileEntry {
 pub struct StatusPayload {
     pub identity_short: String,
     pub devices: Vec<DeviceStatus>,
+    pub connect_urls: Vec<ConnectUrl>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -87,6 +91,15 @@ pub struct HistoryEntry {
     pub cid: String,
     pub modified: u64,
     pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectUrl {
+    pub id: String,
+    pub label: String,
+    pub url: String,
+    pub kind: String,
+    pub remote: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -208,6 +221,7 @@ pub async fn status(State(state): State<AppState>) -> Json<StatusPayload> {
     Json(StatusPayload {
         identity_short: state.identity_short,
         devices,
+        connect_urls: state.connect_urls.clone(),
     })
 }
 
@@ -439,13 +453,14 @@ pub async fn download_entry(
 }
 
 pub async fn capture_text(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<CaptureTextPayload>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let mut entry = CaptureEntry::new(
         payload.text.into_bytes(),
         CaptureKind::Text,
-        CaptureSource::Manual,
+        source_from_peer_headers(&headers, CaptureSource::Manual),
     );
     if let Some(title) = payload.title {
         entry = entry.with_title(&title);
@@ -453,6 +468,7 @@ pub async fn capture_text(
     if let Some(source) = payload.source {
         entry.meta.app_name = Some(source);
     }
+    annotate_peer_metadata(&mut entry, &headers);
     stamp_capture_identity(&mut entry, &state);
     let cid = state
         .capture_engine
@@ -463,6 +479,7 @@ pub async fn capture_text(
 }
 
 pub async fn capture_drop(
+    headers: HeaderMap,
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
@@ -475,8 +492,13 @@ pub async fn capture_drop(
         }
 
         let kind = aeon_capture::file::kind_from_path(std::path::Path::new(&filename), &data);
-        let mut entry =
-            CaptureEntry::new(data.to_vec(), kind, CaptureSource::DragDrop).with_title(&filename);
+        let mut entry = CaptureEntry::new(
+            data.to_vec(),
+            kind,
+            source_from_peer_headers(&headers, CaptureSource::DragDrop),
+        )
+        .with_title(&filename);
+        annotate_peer_metadata(&mut entry, &headers);
         stamp_capture_identity(&mut entry, &state);
         let cid = state
             .capture_engine
@@ -493,28 +515,132 @@ pub async fn capture_drop(
 }
 
 pub async fn capture_apps(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let attempts = state
-        .app_registry
-        .capture_running_detailed(state.capture_engine.clone())
-        .await
-        .into_iter()
-        .map(|attempt| {
-            serde_json::json!({
-                "app": attempt.app,
-                "running": attempt.running,
-                "captured": attempt.captured.map(|cid| hex_cid(&cid)),
-                "reason": attempt.reason,
-            })
-        })
-        .collect::<Vec<_>>();
-    let captured = attempts
-        .iter()
-        .filter_map(|attempt| attempt["captured"].as_str().map(str::to_string))
-        .collect::<Vec<_>>();
+    let (captured, attempts) = capture_known_apps(&state).await;
     Json(serde_json::json!({
         "captured": captured,
         "attempts": attempts,
     }))
+}
+
+pub async fn capture_processes(State(state): State<AppState>) -> Json<serde_json::Value> {
+    match capture_process_inventory(&state).await {
+        Ok((cid, count)) => Json(serde_json::json!({
+            "ok": true,
+            "cid": hex_cid(&cid),
+            "captured": [hex_cid(&cid)],
+            "process_count": count,
+            "message": format!("已捕获 {count} 个运行进程"),
+        })),
+        Err(error) => Json(serde_json::json!({"ok": false, "error": error})),
+    }
+}
+
+pub async fn capture_all(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mut captured = Vec::new();
+    let mut errors = Vec::new();
+    let process_count = match capture_process_inventory(&state).await {
+        Ok((cid, count)) => {
+            captured.push(hex_cid(&cid));
+            count
+        }
+        Err(error) => {
+            errors.push(error);
+            0
+        }
+    };
+    let (app_captured, attempts) = capture_known_apps(&state).await;
+    captured.extend(app_captured);
+
+    Json(serde_json::json!({
+        "ok": errors.is_empty() || !captured.is_empty(),
+        "captured": captured,
+        "process_count": process_count,
+        "attempts": attempts,
+        "errors": errors,
+        "message": "全机状态已捕获",
+    }))
+}
+
+async fn capture_known_apps(state: &AppState) -> (Vec<String>, Vec<serde_json::Value>) {
+    let mut captured = Vec::new();
+    let mut attempts = Vec::new();
+
+    for handler in state.app_registry.handlers() {
+        let app = handler.app_name().to_string();
+        if !handler.is_running() {
+            attempts.push(serde_json::json!({
+                "app": app,
+                "running": false,
+                "captured": null,
+                "reason": "not running",
+            }));
+            continue;
+        }
+
+        let Some(mut entry) = handler.capture() else {
+            attempts.push(serde_json::json!({
+                "app": app,
+                "running": true,
+                "captured": null,
+                "reason": "no capturable state found",
+            }));
+            continue;
+        };
+
+        stamp_capture_identity(&mut entry, state);
+        match state.capture_engine.capture(entry).await {
+            Ok(cid) => {
+                let hex = hex_cid(&cid);
+                captured.push(hex.clone());
+                attempts.push(serde_json::json!({
+                    "app": app,
+                    "running": true,
+                    "captured": hex,
+                    "reason": null,
+                }));
+            }
+            Err(err) => attempts.push(serde_json::json!({
+                "app": app,
+                "running": true,
+                "captured": null,
+                "reason": format!("store failed: {err}"),
+            })),
+        }
+    }
+
+    (captured, attempts)
+}
+
+async fn capture_process_inventory(state: &AppState) -> Result<(CID, usize), String> {
+    let processes = tokio::task::spawn_blocking(crate::process::list_processes)
+        .await
+        .map_err(|err| err.to_string())?;
+    let count = processes.len();
+    let payload = serde_json::json!({
+        "captured_at": now_ms(),
+        "process_count": count,
+        "processes": processes,
+    });
+    let data = serde_json::to_vec_pretty(&payload).map_err(|err| err.to_string())?;
+    let mut entry = CaptureEntry::new(data, CaptureKind::ProcessState, CaptureSource::Manual)
+        .with_title(&format!("全机进程清单 ({count})"))
+        .with_summary(&format!("捕获 {count} 个正在运行的进程"))
+        .with_app("Processes");
+    entry
+        .meta
+        .extra
+        .insert("capture_mode".to_string(), "process-inventory".to_string());
+    entry
+        .meta
+        .extra
+        .insert("process_count".to_string(), count.to_string());
+    stamp_capture_identity(&mut entry, state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok((cid, count))
 }
 
 pub async fn list_process_entries() -> Json<Vec<crate::process::ProcessInfo>> {
@@ -999,6 +1125,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/capture/text", post(capture_text))
         .route("/api/capture/drop", post(capture_drop))
         .route("/api/capture/apps", post(capture_apps))
+        .route("/api/capture/processes", post(capture_processes))
+        .route("/api/capture/all", post(capture_all))
         .route("/api/capture-process", post(capture_process_option))
         .route("/api/capture/process/:pid", post(capture_process))
         .route("/api/capture/vm/:vm_id", post(capture_vm))
@@ -1008,6 +1136,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/download/:filename", get(download_file))
         .route("/api/files/:filename", delete(delete_file))
         .route("/api/files/:filename", post(save_file))
+        .layer(DefaultBodyLimit::max(MAX_CAPTURE_UPLOAD_BYTES))
         .with_state(state)
 }
 
@@ -1125,6 +1254,56 @@ fn source_label(source: &CaptureSource) -> String {
         CaptureSource::Manual => "手动捕获".to_string(),
         CaptureSource::PeerSync { device_name } => format!("设备同步: {device_name}"),
     }
+}
+
+fn source_from_peer_headers(headers: &HeaderMap, default: CaptureSource) -> CaptureSource {
+    match header_value(headers, "x-aeon-device-kind")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "android" => CaptureSource::ShareMenu,
+        "" => default,
+        _ => header_value(headers, "x-aeon-device-name")
+            .map(|device_name| CaptureSource::PeerSync { device_name })
+            .unwrap_or(default),
+    }
+}
+
+fn annotate_peer_metadata(entry: &mut CaptureEntry, headers: &HeaderMap) {
+    if let Some(device_id) = header_value(headers, "x-aeon-device-id") {
+        entry
+            .meta
+            .extra
+            .insert("source_device_id".to_string(), device_id);
+    }
+    if let Some(device_name) = header_value(headers, "x-aeon-device-name") {
+        entry
+            .meta
+            .extra
+            .insert("source_device_name".to_string(), device_name.clone());
+        if entry.meta.app_name.is_none() {
+            entry.meta.app_name = Some(device_name);
+        }
+    }
+    if let Some(device_kind) = header_value(headers, "x-aeon-device-kind") {
+        entry
+            .meta
+            .extra
+            .insert("source_device_kind".to_string(), device_kind.clone());
+        if entry.meta.app_name.is_none() && device_kind.eq_ignore_ascii_case("android") {
+            entry.meta.app_name = Some("Android".to_string());
+        }
+    }
+}
+
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn stamp_capture_identity(entry: &mut CaptureEntry, state: &AppState) {

@@ -1,4 +1,3 @@
-use aeon_capture::apps::{list_vms, AeonVmInfo};
 use serde::{Deserialize, Serialize};
 use sysinfo::{Pid, ProcessStatus, System};
 
@@ -62,7 +61,7 @@ pub fn list_processes() -> Vec<ProcessInfo> {
             let status = status_label(process.status()).to_string();
             let memory_mb = process.memory() / 1024 / 1024;
 
-            let (kind, capture_options) = if let Some(vm_id) = detect_aeon_vm(&name, pid_u32) {
+            let (kind, mut capture_options) = if let Some(vm_id) = detect_aeon_vm(&name, pid_u32) {
                 (
                     ProcessKind::AeonVM {
                         vm_id: vm_id.clone(),
@@ -74,6 +73,19 @@ pub fn list_processes() -> Vec<ProcessInfo> {
             } else {
                 (ProcessKind::Unknown, unknown_options(pid_u32))
             };
+            if !matches!(kind, ProcessKind::AeonVM { .. })
+                && !capture_options
+                    .iter()
+                    .any(|option| option.kind == CaptureOptionKind::Metadata)
+            {
+                capture_options.push(option(
+                    "metadata",
+                    "捕获进程信息",
+                    "保存进程名称、PID、路径、资源占用等基本信息",
+                    "ℹ️",
+                    CaptureOptionKind::Metadata,
+                ));
+            }
 
             Some(ProcessInfo {
                 pid: pid_u32,
@@ -88,7 +100,6 @@ pub fn list_processes() -> Vec<ProcessInfo> {
         })
         .collect::<Vec<_>>();
 
-    result.extend(list_vms().into_iter().map(vm_process_info));
     result.sort_by(process_sort);
     result
 }
@@ -318,23 +329,6 @@ fn option(
         description: description.to_string(),
         icon: icon.to_string(),
         kind,
-    }
-}
-
-fn vm_process_info(vm: AeonVmInfo) -> ProcessInfo {
-    let memory_mb = vm
-        .snapshot_size
-        .map(|size| ((size as u64) + 1024 * 1024 - 1) / 1024 / 1024)
-        .unwrap_or(0);
-    ProcessInfo {
-        pid: 0,
-        name: format!("aeon-vm ({})", vm.id),
-        exe: vm.program_path.clone(),
-        cpu_percent: 0.0,
-        memory_mb,
-        status: vm.status,
-        capture_options: vm_options(&vm.id),
-        kind: ProcessKind::AeonVM { vm_id: vm.id },
     }
 }
 

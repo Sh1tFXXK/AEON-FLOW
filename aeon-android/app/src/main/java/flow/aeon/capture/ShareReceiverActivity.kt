@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 
 class ShareReceiverActivity : Activity() {
@@ -12,15 +13,21 @@ class ShareReceiverActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         Thread {
-            val ok = when (intent.action) {
-                Intent.ACTION_SEND -> captureSingle(intent)
-                Intent.ACTION_SEND_MULTIPLE -> captureMultiple(intent)
-                else -> false
+            val result = try {
+                when (intent.action) {
+                    Intent.ACTION_SEND -> captureSingle(intent)
+                    Intent.ACTION_SEND_MULTIPLE -> captureMultiple(intent)
+                    else -> AeonAgent.ActionResult(false, "Unsupported share action")
+                }
+            } catch (error: Throwable) {
+                Log.e("AEON", "Share capture failed", error)
+                AeonAgent.ActionResult(false, error.message ?: error.javaClass.simpleName)
             }
+            Log.i("AEON", "Share capture result ok=${result.ok} action=${intent.action} message=${result.message}")
             runOnUiThread {
                 Toast.makeText(
                     this,
-                    if (ok) "Captured to AEON" else "AEON capture failed",
+                    result.message,
                     Toast.LENGTH_SHORT
                 ).show()
                 finish()
@@ -28,27 +35,37 @@ class ShareReceiverActivity : Activity() {
         }.start()
     }
 
-    private fun captureSingle(intent: Intent): Boolean {
+    private fun captureSingle(intent: Intent): AeonAgent.ActionResult {
         val text = intent.getStringExtra(Intent.EXTRA_TEXT)
         if (text != null) {
-            return AeonAgent.captureText(this, text)
+            return AeonAgent.captureTextResult(this, text)
         }
 
         val uri = streamUri(intent)
         if (uri != null) {
-            return AeonAgent.captureUri(this, uri)
+            return AeonAgent.captureUriResult(this, uri)
         }
 
-        return false
+        return AeonAgent.ActionResult(false, "No shared content found")
     }
 
-    private fun captureMultiple(intent: Intent): Boolean {
-        val uris = streamUris(intent) ?: return false
-        var ok = false
+    private fun captureMultiple(intent: Intent): AeonAgent.ActionResult {
+        val uris = streamUris(intent) ?: return AeonAgent.ActionResult(false, "No shared files found")
+        var okCount = 0
+        var lastError = "No files captured"
         for (uri in uris) {
-            ok = AeonAgent.captureUri(this, uri) || ok
+            val result = AeonAgent.captureUriResult(this, uri)
+            if (result.ok) {
+                okCount += 1
+            } else {
+                lastError = result.message
+            }
         }
-        return ok
+        return if (okCount > 0) {
+            AeonAgent.ActionResult(true, "Captured $okCount/${uris.size} to AEON")
+        } else {
+            AeonAgent.ActionResult(false, lastError)
+        }
     }
 
     private fun streamUri(intent: Intent): Uri? {
