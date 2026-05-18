@@ -109,7 +109,9 @@ pub enum VaultError {
     Io,
     Serialize,
     CryptoUnavailable,
+    #[cfg(test)]
     MissingEntry,
+    #[cfg(test)]
     DecryptFailed,
 }
 
@@ -166,6 +168,7 @@ impl CredentialVaultStore {
         write_vault_file(&self.path, &self.file)
     }
 
+    #[cfg(test)]
     pub fn decrypt_entry(
         &self,
         password: &str,
@@ -232,6 +235,7 @@ fn encrypt(key: &[u8; KEY_LEN], nonce: &[u8], plaintext: &[u8]) -> Result<Vec<u8
         .map_err(|_| VaultError::CryptoUnavailable)
 }
 
+#[cfg(test)]
 fn decrypt(key: &[u8; KEY_LEN], nonce: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, VaultError> {
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| VaultError::CryptoUnavailable)?;
     let nonce = Nonce::from_slice(nonce);

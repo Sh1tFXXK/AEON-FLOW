@@ -112,9 +112,11 @@ mod tests {
     use aeon_capture::{CaptureKind, CaptureMetadata, CaptureRecord, CaptureSource};
 
     fn record(title: &str, summary: &str, kind: CaptureKind) -> CaptureRecord {
-        let mut meta = CaptureMetadata::default();
-        meta.title = Some(title.to_string());
-        meta.summary = Some(summary.to_string());
+        let meta = CaptureMetadata {
+            title: Some(title.to_string()),
+            summary: Some(summary.to_string()),
+            ..Default::default()
+        };
         CaptureRecord {
             cid: [1u8; 32],
             kind,
