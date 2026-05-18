@@ -114,6 +114,9 @@ mod tests {
                 )
                 .unwrap(),
             )),
+            credential_vault: Arc::new(Mutex::new(
+                crate::vault::CredentialVaultStore::new(dir.join("vault.json")).unwrap(),
+            )),
             devices: Arc::new(Mutex::new(DeviceRegistry::default())),
             connect_urls: Vec::new(),
             relay_url: None,

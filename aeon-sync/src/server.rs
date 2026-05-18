@@ -49,6 +49,7 @@ pub struct AppState {
     pub app_registry: Arc<AppCaptureRegistry>,
     pub operation_context: Arc<Mutex<crate::operation_context::ContextStore>>,
     pub account_profiles: Arc<Mutex<crate::account_profiles::AccountProfileStore>>,
+    pub credential_vault: Arc<Mutex<crate::vault::CredentialVaultStore>>,
     pub devices: Arc<Mutex<DeviceRegistry>>,
     pub connect_urls: Vec<ConnectUrl>,
     pub relay_url: Option<String>,
@@ -1470,6 +1471,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/accounts/:id/browser-plan",
             post(crate::account_profiles::browser_launch_plan),
+        )
+        .route(
+            "/api/vault/entries",
+            get(crate::vault::list_entries).post(crate::vault::add_entry),
         )
         .route("/api/entries", get(list_entries))
         .route("/api/entry/:cid", get(get_entry))

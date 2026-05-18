@@ -11,6 +11,7 @@ mod operation_context;
 mod process;
 mod relay;
 mod server;
+mod vault;
 mod watcher;
 
 #[tokio::main]
@@ -46,6 +47,10 @@ async fn main() {
     let account_profiles = Arc::new(Mutex::new(
         account_profiles::AccountProfileStore::new(aeon_dir.join("account-profiles.json"))
             .expect("failed to open account profile store"),
+    ));
+    let credential_vault = Arc::new(Mutex::new(
+        vault::CredentialVaultStore::new(aeon_dir.join("vault.json"))
+            .expect("failed to open credential vault"),
     ));
 
     let identity_path = aeon_dir.join("identity");
@@ -138,6 +143,7 @@ async fn main() {
         app_registry,
         operation_context,
         account_profiles,
+        credential_vault,
         devices: Arc::new(Mutex::new(server::DeviceRegistry::default())),
         connect_urls: connect_urls.clone(),
         relay_url,
