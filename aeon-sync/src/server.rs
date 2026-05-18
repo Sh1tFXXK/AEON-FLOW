@@ -1452,6 +1452,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/capture/text", post(capture_text))
         .route("/api/capture/webpage", post(capture_webpage))
         .route("/api/capture/drop", post(capture_drop))
+        .route("/api/bridge/sms", post(crate::bridge::capture_sms))
+        .route("/api/bridge/email", post(crate::bridge::capture_email))
         .route("/api/capture/apps", post(capture_apps))
         .route("/api/capture/processes", post(capture_processes))
         .route("/api/capture/all", post(capture_all))

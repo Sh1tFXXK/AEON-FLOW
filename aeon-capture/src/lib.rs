@@ -1,4 +1,5 @@
 pub mod apps;
+pub mod bridge;
 pub mod capture;
 pub mod clipboard;
 pub mod engine;

@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
+mod bridge;
 mod process;
 mod relay;
 mod server;
