@@ -53,8 +53,8 @@ impl EventLog {
     pub fn list(&self, query: EventQuery) -> io::Result<Vec<AeonEvent>> {
         let mut events = self.read_all()?;
         events.retain(|event| {
-            query.from.map_or(true, |from| event.ts >= from)
-                && query.to.map_or(true, |to| event.ts <= to)
+            query.from.is_none_or(|from| event.ts >= from)
+                && query.to.is_none_or(|to| event.ts <= to)
         });
         events.sort_by(|a, b| b.ts.cmp(&a.ts).then(a.id.0.cmp(&b.id.0)));
         events.truncate(query.limit);

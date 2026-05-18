@@ -20,7 +20,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path as FsPath, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 use tokio_util::io::ReaderStream;
@@ -513,10 +513,7 @@ pub async fn download_entry(
             .header(header::CONTENT_TYPE, blob.mime)
             .header(
                 header::CONTENT_DISPOSITION,
-                format!(
-                    "inline; filename=\"{}.bin\"",
-                    hex_cid(&cid)[..12].to_string()
-                ),
+                format!("inline; filename=\"{}.bin\"", &hex_cid(&cid)[..12]),
             )
             .body(Body::from(blob.data))
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
@@ -1725,13 +1722,13 @@ fn language_from_filename(name: &str) -> Option<&'static str> {
     }
 }
 
-fn history_path(sync_dir: &PathBuf, name: &str) -> PathBuf {
+fn history_path(sync_dir: &FsPath, name: &str) -> PathBuf {
     let dir = sync_dir.join(".aeon-history");
     dir.join(format!("{}.json", name.replace("/", "_")))
 }
 
 async fn append_history(
-    sync_dir: &PathBuf,
+    sync_dir: &FsPath,
     name: &str,
     cid: String,
     deleted: bool,
@@ -1764,17 +1761,17 @@ async fn append_history(
     tokio::fs::write(path, bytes).await
 }
 
-fn meta_path(sync_dir: &PathBuf, name: &str) -> PathBuf {
+fn meta_path(sync_dir: &FsPath, name: &str) -> PathBuf {
     let dir = sync_dir.join(".aeon-meta");
     dir.join(format!("{}.json", name.replace("/", "_")))
 }
 
-async fn read_file_meta(sync_dir: &PathBuf, name: &str) -> std::io::Result<FileMeta> {
+async fn read_file_meta(sync_dir: &FsPath, name: &str) -> std::io::Result<FileMeta> {
     let bytes = tokio::fs::read(meta_path(sync_dir, name)).await?;
     Ok(serde_json::from_slice(&bytes).unwrap_or_default())
 }
 
-async fn write_file_meta(sync_dir: &PathBuf, name: &str, meta: FileMeta) -> std::io::Result<()> {
+async fn write_file_meta(sync_dir: &FsPath, name: &str, meta: FileMeta) -> std::io::Result<()> {
     let path = meta_path(sync_dir, name);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;

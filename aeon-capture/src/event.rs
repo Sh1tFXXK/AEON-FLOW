@@ -52,11 +52,10 @@ impl EventId {
         }
 
         let mut bytes = [0u8; 32];
-        for index in 0..32 {
+        for (index, byte) in bytes.iter_mut().enumerate() {
             let start = index * 2;
             let end = start + 2;
-            bytes[index] =
-                u8::from_str_radix(&value[start..end], 16).map_err(|_| ParseEventIdError)?;
+            *byte = u8::from_str_radix(&value[start..end], 16).map_err(|_| ParseEventIdError)?;
         }
         Ok(Self(bytes))
     }

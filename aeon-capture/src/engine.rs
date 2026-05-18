@@ -48,8 +48,7 @@ impl CaptureEngine {
         let cid = entry.cid;
         self.stamp_identity(&mut entry);
         self.enrich(&mut entry);
-        crate::apps::auto_wrap_capture_entry(&mut entry)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+        crate::apps::auto_wrap_capture_entry(&mut entry).map_err(io::Error::other)?;
 
         {
             let mut store = self.store.lock().await;
@@ -135,11 +134,9 @@ impl CaptureEngine {
                     }
                 }
             }
-            CaptureKind::Webpage => {
-                if entry.meta.summary.is_none() {
-                    if let Ok(text) = std::str::from_utf8(&entry.data) {
-                        entry.meta.summary = Some(text.chars().take(120).collect());
-                    }
+            CaptureKind::Webpage if entry.meta.summary.is_none() => {
+                if let Ok(text) = std::str::from_utf8(&entry.data) {
+                    entry.meta.summary = Some(text.chars().take(120).collect());
                 }
             }
             _ => {}
