@@ -77,3 +77,8 @@ AEON Capture 把“我正在做什么”转换成统一的 `CaptureEntry`。文�
 - 浏览器捕获读取 Chrome/Firefox 最近历史条目；真正当前活动标签页仍需要浏览器扩展或 native messaging。
 - 任意普通进程目前可捕获元数据和窗口截图；完整可运行状态迁移只对 AEON VM 管理的进程成立。
 - Windows 托盘 OLE 拖放尚未实现；Web 拖放、目录监听和进程面板是当前工作路径。
+# AEON Capture Notes
+
+AEON capture now includes the original capture surfaces plus typed bridge ingress for SMS and email.
+
+See [AEON_FOUNDATIONS.md](AEON_FOUNDATIONS.md) for the current bridge, context, account-profile, vault, and query API contracts.
