@@ -109,8 +109,11 @@ mod tests {
     }
 
     fn event_with_ts(ts: u64, text: &str) -> AeonEvent {
-        let mut entry =
-            CaptureEntry::new(text.as_bytes().to_vec(), CaptureKind::Text, CaptureSource::Manual);
+        let mut entry = CaptureEntry::new(
+            text.as_bytes().to_vec(),
+            CaptureKind::Text,
+            CaptureSource::Manual,
+        );
         entry.captured_at = ts;
         entry.by = [3u8; 32];
         entry.device = [4u8; 16];

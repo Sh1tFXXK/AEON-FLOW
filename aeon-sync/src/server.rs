@@ -4,14 +4,14 @@ use aeon_capture::{
         list_recent_vms, set_vm_status, AeonVmInfo, AppCapture, AppCaptureRegistry, BrowserCapture,
         ClaudeDesktopCapture, ProcessStateCapture, VSCodeCapture,
     },
-    hex_cid, parse_cid_hex, CaptureEngine, CaptureEntry, CaptureKind, CaptureRecord, CaptureSource,
-    CID,
+    hex_cid, parse_cid_hex, AeonEvent, CaptureEngine, CaptureEntry, CaptureKind, CaptureRecord,
+    CaptureSource, EventId, EventLog, EventQuery, CID,
 };
 use axum::{
     body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        DefaultBodyLimit, Multipart, Path, State,
+        DefaultBodyLimit, Multipart, Path, Query, State,
     },
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Json, Response},
@@ -45,6 +45,7 @@ pub struct AppState {
     pub identity_id: [u8; 32],
     pub device_id: [u8; 16],
     pub capture_engine: Arc<CaptureEngine>,
+    pub event_log: Arc<Mutex<EventLog>>,
     pub app_registry: Arc<AppCaptureRegistry>,
     pub devices: Arc<Mutex<DeviceRegistry>>,
     pub connect_urls: Vec<ConnectUrl>,
@@ -76,6 +77,13 @@ pub struct CaptureWebpagePayload {
 pub struct EditEntryPayload {
     pub text: String,
     pub title: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct EventListParams {
+    pub from: Option<u64>,
+    pub to: Option<u64>,
+    pub limit: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -181,6 +189,16 @@ pub struct CaptureDetailPayload {
     #[serde(flatten)]
     pub entry: CapturePayload,
     pub text: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct EventPayload {
+    pub id: String,
+    pub ts: u64,
+    pub kind: aeon_capture::EventKind,
+    pub source: aeon_capture::EventSource,
+    pub device: String,
+    pub identity: String,
 }
 
 impl DeviceRegistry {
@@ -359,6 +377,49 @@ pub async fn list_entries(State(state): State<AppState>) -> Json<Vec<CapturePayl
         .map(capture_payload)
         .collect();
     Json(entries)
+}
+
+impl EventListParams {
+    fn try_into_query(self) -> Result<EventQuery, StatusCode> {
+        let limit = self.limit.unwrap_or(100);
+        if limit == 0 {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        Ok(EventQuery {
+            from: self.from,
+            to: self.to,
+            limit: limit.min(500),
+        })
+    }
+}
+
+pub async fn list_events(
+    Query(params): Query<EventListParams>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<EventPayload>>, StatusCode> {
+    let query = params.try_into_query()?;
+    let events = state
+        .event_log
+        .lock()
+        .await
+        .list(query)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(events.into_iter().map(event_payload).collect()))
+}
+
+pub async fn get_event(
+    Path(id_hex): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<EventPayload>, StatusCode> {
+    let id = EventId::from_hex(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let event = state
+        .event_log
+        .lock()
+        .await
+        .get(&id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(event_payload(event)))
 }
 
 pub async fn get_entry(
@@ -1383,6 +1444,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/ws", get(ws_handler))
         .route("/api/status", get(status))
         .route("/api/devices/hello", post(device_hello))
+        .route("/api/events", get(list_events))
+        .route("/api/events/:id", get(get_event))
         .route("/api/entries", get(list_entries))
         .route("/api/entry/:cid", get(get_entry))
         .route("/api/entry/:cid/edit", post(edit_entry))
@@ -1434,6 +1497,21 @@ fn capture_payload(record: CaptureRecord) -> CapturePayload {
         extra: record.meta.extra.clone(),
         editable: is_editable_kind(&record.kind),
     }
+}
+
+fn event_payload(event: AeonEvent) -> EventPayload {
+    EventPayload {
+        id: event.id.to_hex(),
+        ts: event.ts,
+        kind: event.kind,
+        source: event.source,
+        device: hex_bytes_local(&event.device),
+        identity: hex_bytes_local(&event.identity),
+    }
+}
+
+fn hex_bytes_local(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn capture_record_from_entry(entry: &CaptureEntry) -> CaptureRecord {
@@ -1798,5 +1876,29 @@ mod tests {
         });
 
         assert!(registry.list(now).is_empty());
+    }
+
+    #[test]
+    fn event_list_params_enforce_bounded_nonzero_limit() {
+        let default_query = EventListParams::default().try_into_query().unwrap();
+        assert_eq!(default_query.limit, 100);
+
+        let capped_query = EventListParams {
+            from: Some(10),
+            to: Some(20),
+            limit: Some(5000),
+        }
+        .try_into_query()
+        .unwrap();
+        assert_eq!(capped_query.from, Some(10));
+        assert_eq!(capped_query.to, Some(20));
+        assert_eq!(capped_query.limit, 500);
+
+        let zero_limit = EventListParams {
+            from: None,
+            to: None,
+            limit: Some(0),
+        };
+        assert!(zero_limit.try_into_query().is_err());
     }
 }

@@ -1,4 +1,4 @@
-use aeon_capture::{apps, CaptureEngine, CaptureStore};
+use aeon_capture::{apps, CaptureEngine, CaptureStore, EventLog};
 use aeon_store::{CIDStore, Identity};
 use std::collections::HashSet;
 use std::net::SocketAddr;
@@ -35,6 +35,7 @@ async fn main() {
     let aeon_dir = home.join(".aeon");
     let store_dir = aeon_dir.join("store");
     std::fs::create_dir_all(&store_dir).expect("failed to create store directory");
+    let event_log = Arc::new(Mutex::new(EventLog::new(aeon_dir.join("events.jsonl"))));
 
     let identity_path = aeon_dir.join("identity");
     let identity = Identity::load_or_create(&identity_path).expect("failed to load identity");
@@ -45,10 +46,11 @@ async fn main() {
         aeon_dir.join("capture-index.json"),
     )
     .expect("failed to open capture store");
-    let capture_engine = Arc::new(CaptureEngine::new_with_identity(
+    let capture_engine = Arc::new(CaptureEngine::new_with_identity_and_events(
         Arc::new(Mutex::new(capture_store)),
         identity.id,
         device_id,
+        Some(event_log.clone()),
     ));
 
     #[cfg(target_os = "windows")]
@@ -121,6 +123,7 @@ async fn main() {
         identity_id: identity.id,
         device_id,
         capture_engine,
+        event_log,
         app_registry,
         devices: Arc::new(Mutex::new(server::DeviceRegistry::default())),
         connect_urls: connect_urls.clone(),
