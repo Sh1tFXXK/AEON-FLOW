@@ -1,0 +1,10 @@
+monitoring app: Claude Desktop
+
+AEON Flow capture service started
+----------------------------------------
+Identity ID: 7c56b052
+Sync dir:    C:\Users\Administrator\AEON
+Local:       http://localhost:8080
+LAN:         http://192.168.0.44:8080
+Tailscale:   http://100.101.94.107:8080
+----------------------------------------

@@ -8,6 +8,7 @@ name = "aeon-sync"
 path = "src/main.rs"
 
 [dependencies]
+aeon-capture = { path = "../aeon-capture" }
 axum = { version = "0.7", features = ["multipart", "ws"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
@@ -15,7 +16,9 @@ notify = "6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 blake3 = "1.5"
+base64 = "0.22"
 dirs = "5"
+sysinfo = "0.30"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 mime_guess = "2"

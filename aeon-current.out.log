@@ -1,0 +1,21 @@
+monitoring app: Claude Desktop
+monitoring app: Edge
+monitoring app: Terminal
+AEON embedded Relay started
+Relay space: home
+Relay store: C:\Users\Administrator\.aeon-relay
+Relay URL:   http://0.0.0.0:8090
+AEON Relay pull enabled: http://127.0.0.1:8090 (space: home)
+AEON LAN discovery listening on udp://0.0.0.0:8091
+AEON Relay push enabled (space: home)
+
+AEON Flow capture service started
+----------------------------------------
+Identity ID: 7c56b052
+Sync dir:    C:\Users\Administrator\AEON
+Local:       http://localhost:8080
+LAN:         http://192.168.71.240:8080
+AEON Relay Local: http://localhost:8090
+AEON Relay LAN: http://192.168.71.240:8090
+AEON Relay:  http://127.0.0.1:8090
+----------------------------------------

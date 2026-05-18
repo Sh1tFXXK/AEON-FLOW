@@ -6,6 +6,7 @@ use crate::vm::VMState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
@@ -15,6 +16,14 @@ pub struct VMInfo {
     pub status: String,
     pub program_path: String,
     pub program_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct VMSnapshotExport {
+    pub info: VMInfo,
+    pub snapshot_path: PathBuf,
+    pub bytes: Vec<u8>,
+    pub snapshot: Snapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +69,14 @@ impl DaemonState {
     }
 
     pub fn recover(state_dir: PathBuf) -> Result<Self, String> {
+        Self::load_state(state_dir, true)
+    }
+
+    pub fn inspect(state_dir: PathBuf) -> Result<Self, String> {
+        Self::load_state(state_dir, false)
+    }
+
+    fn load_state(state_dir: PathBuf, append_restart_events: bool) -> Result<Self, String> {
         let manifest_path = state_dir.join("daemon_state.json");
         if !manifest_path.exists() {
             return Self::new(state_dir);
@@ -73,7 +90,9 @@ impl DaemonState {
             vms: manifest.vms,
             event_tx: tokio::sync::broadcast::channel(100).0,
         };
-        state.append_daemon_restart_events()?;
+        if append_restart_events {
+            state.append_daemon_restart_events()?;
+        }
         Ok(state)
     }
 
@@ -111,15 +130,38 @@ impl DaemonState {
         let mut out = self
             .vms
             .values()
-            .map(|record| VMInfo {
-                id: record.id.clone(),
-                status: record.status.clone(),
-                program_path: record.program_path.clone(),
-                program_id: record.program_id.clone(),
-            })
+            .map(vm_info_from_record)
             .collect::<Vec<_>>();
         out.sort_by(|a, b| a.id.cmp(&b.id));
         out
+    }
+
+    pub fn snapshot_path(&self, id: &str) -> Result<PathBuf, String> {
+        let record = self
+            .vms
+            .get(id)
+            .ok_or_else(|| format!("unknown VM {}", id))?;
+        Ok(PathBuf::from(&record.snapshot_path))
+    }
+
+    pub fn export_snapshot(&self, id: &str) -> Result<VMSnapshotExport, String> {
+        let record = self
+            .vms
+            .get(id)
+            .ok_or_else(|| format!("unknown VM {}", id))?;
+        let snapshot_path = PathBuf::from(&record.snapshot_path);
+        let bytes = std::fs::read(&snapshot_path)
+            .map_err(|err| format!("read snapshot {}: {}", snapshot_path.display(), err))?;
+        let snapshot = Snapshot::from_bytes(&bytes)
+            .map_err(|err| format!("decode snapshot {}: {}", snapshot_path.display(), err))?;
+        snapshot.event_log.verify()?;
+
+        Ok(VMSnapshotExport {
+            info: vm_info_from_record(record),
+            snapshot_path,
+            bytes,
+            snapshot,
+        })
     }
 
     pub fn pause(&mut self, id: &str) -> Result<(), String> {
@@ -169,7 +211,10 @@ impl DaemonState {
             .map_err(|err| format!("save snapshot: {}", err))?;
         record.status = "migrated".into();
         self.save_manifest()?;
-        self.emit(&format!(r#"{{"type": "VM_MIGRATED", "id": "{}", "to": "{}"}}"#, id, to));
+        self.emit(&format!(
+            r#"{{"type": "VM_MIGRATED", "id": "{}", "to": "{}"}}"#,
+            id, to
+        ));
         Ok(())
     }
 
@@ -239,11 +284,35 @@ pub fn handle_json_request(state: &mut DaemonState, input: &str) -> Result<Strin
             json!({"ok": true})
         }
         "log" => json!({"ok": true, "events": state.log(required_arg(&request, 0)?)?}),
+        "snapshot" => {
+            let export = state.export_snapshot(required_arg(&request, 0)?)?;
+            let events = export.snapshot.event_log.lines();
+            json!({
+                "ok": true,
+                "vm": export.info,
+                "snapshot_path": export.snapshot_path.display().to_string(),
+                "size": export.bytes.len(),
+                "format_version": export.snapshot.format_version,
+                "pc": export.snapshot.pc,
+                "steps": export.snapshot.steps,
+                "event_count": events.len(),
+                "last_event": events.last(),
+            })
+        }
         "devices" => json!({"ok": true, "devices": ["local"]}),
         "share" => json!({"ok": true, "context": state.share(required_arg(&request, 0)?)?}),
         other => json!({"ok": false, "error": format!("unknown command {}", other)}),
     };
     serde_json::to_string(&response).map_err(|err| err.to_string())
+}
+
+fn vm_info_from_record(record: &VMRecord) -> VMInfo {
+    VMInfo {
+        id: record.id.clone(),
+        status: record.status.clone(),
+        program_path: record.program_path.clone(),
+        program_id: record.program_id.clone(),
+    }
 }
 
 pub fn default_socket_path() -> PathBuf {
@@ -326,7 +395,7 @@ pub fn send_request(socket_path: &Path, request: &DaemonRequest) -> Result<Strin
 }
 
 #[cfg(not(unix))]
-pub fn serve(_socket_path: &Path, _state_dir: PathBuf) -> Result<(), String> {
+pub async fn serve(_socket_path: &Path, _state_dir: PathBuf) -> Result<(), String> {
     Err("aeon-daemon currently requires Unix sockets".into())
 }
 
@@ -345,4 +414,20 @@ fn required_arg(request: &DaemonRequest, index: usize) -> Result<&str, String> {
 
 fn hex_id(id: &[u8; 32]) -> String {
     id.iter().map(|byte| format!("{:02x}", byte)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn non_unix_serve_matches_async_api() {
+        let err = super::serve(
+            &super::default_socket_path(),
+            super::default_state_dir(),
+        )
+        .await
+        .expect_err("non-Unix daemon socket support should be unavailable");
+
+        assert!(err.contains("requires Unix sockets"));
+    }
 }
