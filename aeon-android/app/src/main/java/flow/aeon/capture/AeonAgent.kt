@@ -133,6 +133,19 @@ object AeonAgent {
         val cid: String? = null
     )
 
+    enum class SmsDirection {
+        Incoming,
+        Outgoing
+    }
+
+    data class SmsBridgePayload(
+        val messageId: String,
+        val address: String,
+        val body: String,
+        val receivedAt: Long,
+        val direction: SmsDirection
+    )
+
     fun normalizeEndpoint(endpoint: String): String {
         val trimmed = endpoint.trim().trimEnd('/')
         require(trimmed.isNotEmpty()) { "Endpoint is empty" }
@@ -226,6 +239,30 @@ object AeonAgent {
 
     fun captureText(context: Context, text: String, title: String? = null): Boolean =
         captureTextResult(context, text, title).ok
+
+    fun captureSms(context: Context, payload: SmsBridgePayload): Boolean =
+        captureSmsResult(context, payload).ok
+
+    fun captureSmsResult(context: Context, payload: SmsBridgePayload): ActionResult {
+        ensureEndpoint(context)?.let { return it }
+
+        val body = JSONObject()
+            .put("message_id", payload.messageId)
+            .put("address", payload.address)
+            .put("body", payload.body)
+            .put("received_at", payload.receivedAt)
+            .put("direction", payload.direction.name)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+
+        val result = postBytesWithBody(
+            context,
+            endpoint(context) + "/api/bridge/sms",
+            "application/json; charset=utf-8",
+            body
+        )
+        return actionResultFromBody(result, "SMS captured")
+    }
 
     fun captureTextResult(context: Context, text: String, title: String? = null): ActionResult {
         ensureEndpoint(context)?.let { return it }
