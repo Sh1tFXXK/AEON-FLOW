@@ -47,6 +47,7 @@ pub struct AppState {
     pub capture_engine: Arc<CaptureEngine>,
     pub event_log: Arc<Mutex<EventLog>>,
     pub app_registry: Arc<AppCaptureRegistry>,
+    pub operation_context: Arc<Mutex<crate::operation_context::ContextStore>>,
     pub devices: Arc<Mutex<DeviceRegistry>>,
     pub connect_urls: Vec<ConnectUrl>,
     pub relay_url: Option<String>,
@@ -1443,6 +1444,23 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/devices/hello", post(device_hello))
         .route("/api/events", get(list_events))
         .route("/api/events/:id", get(get_event))
+        .route("/api/context", get(crate::operation_context::get_context))
+        .route(
+            "/api/context/task",
+            post(crate::operation_context::set_task),
+        )
+        .route(
+            "/api/context/clipboard",
+            post(crate::operation_context::set_clipboard),
+        )
+        .route(
+            "/api/context/scratch",
+            post(crate::operation_context::set_scratch),
+        )
+        .route(
+            "/api/context/ai-session",
+            post(crate::operation_context::upsert_ai_session),
+        )
         .route("/api/entries", get(list_entries))
         .route("/api/entry/:cid", get(get_entry))
         .route("/api/entry/:cid/edit", post(edit_entry))

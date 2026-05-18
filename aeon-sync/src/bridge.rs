@@ -105,6 +105,9 @@ mod tests {
             capture_engine: engine.clone(),
             event_log,
             app_registry: Arc::new(aeon_capture::apps::default_registry(engine)),
+            operation_context: Arc::new(Mutex::new(
+                crate::operation_context::ContextStore::new(dir.join("context.json")).unwrap(),
+            )),
             devices: Arc::new(Mutex::new(DeviceRegistry::default())),
             connect_urls: Vec::new(),
             relay_url: None,
