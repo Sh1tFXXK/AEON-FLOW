@@ -1,6 +1,7 @@
 use crate::capture::{CaptureEntry, CaptureKind, CaptureSource};
 use crate::engine::CaptureEngine;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -75,6 +76,104 @@ pub async fn capture_image(engine: Arc<CaptureEngine>, path: PathBuf) {
     entry.meta.file_path = Some(path.to_string_lossy().to_string());
 
     let _ = engine.capture(entry).await;
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VisibleWindow {
+    pub pid: u32,
+    pub title: String,
+    pub left: i32,
+    pub top: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+#[cfg(target_os = "windows")]
+pub fn list_visible_windows() -> Vec<VisibleWindow> {
+    let script = r#"
+$ErrorActionPreference = 'Stop'
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class AeonWindowList {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc proc, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+}
+"@
+$windows = New-Object System.Collections.Generic.List[object]
+$callback = [AeonWindowList+EnumWindowsProc]{
+    param([IntPtr]$hWnd, [IntPtr]$lParam)
+    if (-not [AeonWindowList]::IsWindowVisible($hWnd)) { return $true }
+    $rect = New-Object AeonWindowList+RECT
+    if (-not [AeonWindowList]::GetWindowRect($hWnd, [ref]$rect)) { return $true }
+    $width = $rect.Right - $rect.Left
+    $height = $rect.Bottom - $rect.Top
+    if ($width -lt 80 -or $height -lt 80) { return $true }
+    $pidValue = [uint32]0
+    [AeonWindowList]::GetWindowThreadProcessId($hWnd, [ref]$pidValue) | Out-Null
+    if ($pidValue -eq 0) { return $true }
+    $titleBuilder = New-Object System.Text.StringBuilder 512
+    [AeonWindowList]::GetWindowTextW($hWnd, $titleBuilder, $titleBuilder.Capacity) | Out-Null
+    $title = $titleBuilder.ToString().Trim()
+    if (-not $title) { return $true }
+    $windows.Add([pscustomobject]@{
+        pid = [uint32]$pidValue
+        title = $title
+        left = $rect.Left
+        top = $rect.Top
+        width = $width
+        height = $height
+    }) | Out-Null
+    return $true
+}
+[AeonWindowList]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
+$windows | ConvertTo-Json -Depth 3
+"#;
+    let Ok(output) = std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.trim().is_empty() {
+        return Vec::new();
+    }
+    serde_json::from_str::<Vec<VisibleWindow>>(&stdout)
+        .or_else(|_| serde_json::from_str::<VisibleWindow>(&stdout).map(|window| vec![window]))
+        .unwrap_or_default()
+}
+
+#[cfg(not(target_os = "windows"))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VisibleWindow {
+    pub pid: u32,
+    pub title: String,
+    pub left: i32,
+    pub top: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn list_visible_windows() -> Vec<VisibleWindow> {
+    Vec::new()
 }
 
 #[cfg(target_os = "windows")]

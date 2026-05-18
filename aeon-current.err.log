@@ -1,3 +1,0 @@
-   Compiling aeon-sync v0.1.0 (E:\project\AEON-FLOW\aeon-sync)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.40s
-     Running `target\debug\aeon-sync.exe start --port 8080 --relay-port 8090 --relay-space home --discovery-port 8091 --with-relay`

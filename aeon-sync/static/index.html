@@ -350,7 +350,10 @@ function showCaptureResult(el,data,label){
 async function selectTargetDevice(){
   await refreshStatus();
   const online=devices.filter(d=>d.online&&!d.is_local&&d.id!=='local');
-  if(!online.length){alert('没有在线的其他设备。请在手机端打开 AEON Capture，并使用 AUTO FIND AEON 通过 AEON LAN Discovery 自动连接。');return null;}
+  if(!online.length){
+    showToast('未检测到在线设备，将通过 AEON Relay 投递');
+    return 'aeon-relay';
+  }
   if(online.length===1)return online[0].id;
   const names=online.map((d,i)=>`${i+1}. ${d.name}`).join('\n');
   const idx=prompt(`选择目标设备：\n${names}\n\n输入序号:`);

@@ -79,17 +79,38 @@ pub fn list_vms() -> Vec<AeonVmInfo> {
     list_vms_in_state_dir(default_state_dir()).unwrap_or_default()
 }
 
+pub fn list_recent_vms(limit: usize) -> Vec<AeonVmInfo> {
+    list_recent_vms_in_state_dir(default_state_dir(), limit).unwrap_or_default()
+}
+
 pub fn list_vms_in_state_dir(state_dir: PathBuf) -> Result<Vec<AeonVmInfo>, String> {
+    list_vms_in_state_dir_with_limit(state_dir, None)
+}
+
+pub fn list_recent_vms_in_state_dir(
+    state_dir: PathBuf,
+    limit: usize,
+) -> Result<Vec<AeonVmInfo>, String> {
+    list_vms_in_state_dir_with_limit(state_dir, Some(limit))
+}
+
+fn list_vms_in_state_dir_with_limit(
+    state_dir: PathBuf,
+    limit: Option<usize>,
+) -> Result<Vec<AeonVmInfo>, String> {
     let manifest = read_manifest(&state_dir)?;
-    let mut vms = manifest
-        .vms
-        .into_values()
+    let mut records = manifest.vms.into_values().collect::<Vec<_>>();
+    records.sort_by(|a, b| compare_vm_ids_newest_first(&a.id, &b.id));
+    if let Some(limit) = limit {
+        records.truncate(limit);
+    }
+    let vms = records
+        .into_iter()
         .map(|record| match export_snapshot_record(record.clone()) {
             Ok(export) => vm_info_from_export(export),
             Err(error) => vm_info_with_error(record, error),
         })
         .collect::<Vec<_>>();
-    vms.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(vms)
 }
 
@@ -454,6 +475,16 @@ fn reserve_vm_id(manifest: &mut Manifest) -> String {
             return id;
         }
     }
+}
+
+fn compare_vm_ids_newest_first(a: &str, b: &str) -> std::cmp::Ordering {
+    vm_id_number(b).cmp(&vm_id_number(a)).then_with(|| b.cmp(a))
+}
+
+fn vm_id_number(id: &str) -> u64 {
+    id.strip_prefix("vm-")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0)
 }
 
 fn ensure_capture_wrapper_program(state_dir: &Path) -> Result<PathBuf, String> {

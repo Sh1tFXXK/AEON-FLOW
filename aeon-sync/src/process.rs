@@ -73,6 +73,23 @@ pub fn list_processes() -> Vec<ProcessInfo> {
             } else {
                 (ProcessKind::Unknown, unknown_options(pid_u32))
             };
+
+            if !matches!(kind, ProcessKind::AeonVM { .. })
+                && !capture_options
+                    .iter()
+                    .any(|option| option.id.starts_with("app_state"))
+            {
+                capture_options.insert(
+                    0,
+                    option(
+                        &format!("app_state_{pid_u32}"),
+                        "捕获应用",
+                        "保存这个应用的窗口截图和进程状态",
+                        "▣",
+                        CaptureOptionKind::DeepCapture,
+                    ),
+                );
+            }
             if !matches!(kind, ProcessKind::AeonVM { .. })
                 && !capture_options
                     .iter()
@@ -82,7 +99,7 @@ pub fn list_processes() -> Vec<ProcessInfo> {
                     "metadata",
                     "捕获进程信息",
                     "保存进程名称、PID、路径、资源占用等基本信息",
-                    "ℹ️",
+                    "i",
                     CaptureOptionKind::Metadata,
                 ));
             }
@@ -139,13 +156,7 @@ fn known_app_options(name: &str) -> Option<(String, Vec<CaptureOption>)> {
                     "💬",
                     CaptureOptionKind::DeepCapture,
                 ),
-                option(
-                    "screenshot",
-                    "截图",
-                    "捕获应用当前窗口截图",
-                    "📸",
-                    CaptureOptionKind::Screenshot,
-                ),
+                screenshot_option("捕获应用当前窗口截图"),
             ],
         ));
     }
@@ -167,62 +178,31 @@ fn known_app_options(name: &str) -> Option<(String, Vec<CaptureOption>)> {
                     "📄",
                     CaptureOptionKind::DeepCapture,
                 ),
-                option(
-                    "screenshot",
-                    "截图",
-                    "捕获编辑器截图",
-                    "📸",
-                    CaptureOptionKind::Screenshot,
-                ),
+                screenshot_option("捕获编辑器窗口截图"),
             ],
         ));
     }
     if lower.contains("chrome") {
-        return Some((
-            "chrome".to_string(),
-            vec![
-                option(
-                    "browser_tab",
-                    "捕获当前标签页",
-                    "保存最近浏览页面 URL 和标题",
-                    "🌐",
-                    CaptureOptionKind::DeepCapture,
-                ),
-                option(
-                    "browser_bookmarks",
-                    "捕获书签",
-                    "保存 Chrome 书签文件",
-                    "🔖",
-                    CaptureOptionKind::DeepCapture,
-                ),
-                option(
-                    "screenshot",
-                    "截图",
-                    "捕获当前页面截图",
-                    "📸",
-                    CaptureOptionKind::Screenshot,
-                ),
-            ],
-        ));
+        return Some(("chrome".to_string(), chromium_options("Chrome")));
+    }
+    if lower.contains("msedge") || lower.contains("edge") {
+        return Some(("edge".to_string(), browser_options("Edge", false)));
     }
     if lower.contains("firefox") {
+        return Some(("firefox".to_string(), browser_options("Firefox", false)));
+    }
+    if is_terminal_process(&lower) {
         return Some((
-            "firefox".to_string(),
+            "terminal".to_string(),
             vec![
                 option(
-                    "browser_tab",
-                    "捕获当前标签页",
-                    "保存最近浏览页面 URL 和标题",
-                    "🌐",
+                    "terminal_state",
+                    "捕获终端",
+                    "保存运行中的终端和最近命令历史",
+                    ">_",
                     CaptureOptionKind::DeepCapture,
                 ),
-                option(
-                    "screenshot",
-                    "截图",
-                    "捕获浏览器截图",
-                    "📸",
-                    CaptureOptionKind::Screenshot,
-                ),
+                screenshot_option("捕获终端窗口截图"),
             ],
         ));
     }
@@ -230,18 +210,12 @@ fn known_app_options(name: &str) -> Option<(String, Vec<CaptureOption>)> {
         return Some((
             "office".to_string(),
             vec![
-                option(
-                    "screenshot",
-                    "截图",
-                    "捕获应用当前窗口截图",
-                    "📸",
-                    CaptureOptionKind::Screenshot,
-                ),
+                screenshot_option("捕获 Office 窗口截图"),
                 option(
                     "metadata",
                     "捕获进程信息",
                     "保存 PID、路径、资源占用等基本信息",
-                    "ℹ️",
+                    "i",
                     CaptureOptionKind::Metadata,
                 ),
             ],
@@ -258,17 +232,46 @@ fn known_app_options(name: &str) -> Option<(String, Vec<CaptureOption>)> {
                     "🗒",
                     CaptureOptionKind::DeepCapture,
                 ),
-                option(
-                    "screenshot",
-                    "截图",
-                    "捕获应用当前窗口截图",
-                    "📸",
-                    CaptureOptionKind::Screenshot,
-                ),
+                screenshot_option("捕获 Obsidian 窗口截图"),
             ],
         ));
     }
     None
+}
+
+fn chromium_options(browser: &str) -> Vec<CaptureOption> {
+    let mut options = browser_options(browser, true);
+    options.insert(
+        2,
+        option(
+            "browser_bookmarks",
+            "捕获书签",
+            "保存 Chrome 书签文件",
+            "🔖",
+            CaptureOptionKind::DeepCapture,
+        ),
+    );
+    options
+}
+
+fn browser_options(browser: &str, _chromium: bool) -> Vec<CaptureOption> {
+    vec![
+        option(
+            "browser_tab",
+            "捕获最近网页",
+            &format!("抓取 {browser} 最近访问网页的真实正文"),
+            "🌐",
+            CaptureOptionKind::DeepCapture,
+        ),
+        option(
+            "browser_pages",
+            "捕获网页列表",
+            &format!("列出 {browser} 最近访问的网页标题和 URL"),
+            "☰",
+            CaptureOptionKind::DeepCapture,
+        ),
+        screenshot_option("捕获浏览器窗口截图"),
+    ]
 }
 
 fn unknown_options(pid: u32) -> Vec<CaptureOption> {
@@ -284,7 +287,7 @@ fn unknown_options(pid: u32) -> Vec<CaptureOption> {
             &format!("metadata_{pid}"),
             "捕获进程信息",
             "保存进程名称、PID、资源占用等基本信息",
-            "ℹ️",
+            "i",
             CaptureOptionKind::Metadata,
         ),
     ]
@@ -310,10 +313,20 @@ fn vm_options(vm_id: &str) -> Vec<CaptureOption> {
             &format!("pause_{vm_id}"),
             "暂停",
             "暂停 VM 记录并保留状态",
-            "⏸",
+            "Ⅱ",
             CaptureOptionKind::Pause,
         ),
     ]
+}
+
+fn screenshot_option(description: &str) -> CaptureOption {
+    option(
+        "screenshot",
+        "截图",
+        description,
+        "📸",
+        CaptureOptionKind::Screenshot,
+    )
 }
 
 fn option(
@@ -330,6 +343,21 @@ fn option(
         icon: icon.to_string(),
         kind,
     }
+}
+
+fn is_terminal_process(lower: &str) -> bool {
+    [
+        "windowsterminal",
+        "wt.exe",
+        "powershell",
+        "pwsh",
+        "cmd.exe",
+        "bash.exe",
+        "mintty",
+        "wezterm",
+    ]
+    .iter()
+    .any(|name| lower.contains(name))
 }
 
 fn is_system_process(name: &str) -> bool {
@@ -418,6 +446,21 @@ mod tests {
 
         assert_eq!(app_id, "vscode");
         assert!(options.iter().any(|option| option.id == "vscode_workspace"));
+    }
+
+    #[test]
+    fn classifies_terminal_apps() {
+        let (app_id, options) = known_app_options("powershell.exe").unwrap();
+
+        assert_eq!(app_id, "terminal");
+        assert!(options.iter().any(|option| option.id == "terminal_state"));
+    }
+
+    #[test]
+    fn browser_apps_can_capture_page_lists() {
+        let (_, options) = known_app_options("msedge.exe").unwrap();
+
+        assert!(options.iter().any(|option| option.id == "browser_pages"));
     }
 
     #[test]

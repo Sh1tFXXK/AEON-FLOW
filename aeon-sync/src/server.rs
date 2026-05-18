@@ -1,7 +1,8 @@
 use aeon_capture::{
     apps::{
-        capture_vm_snapshot, list_vms, set_vm_status, AeonVmInfo, AppCapture, AppCaptureRegistry,
-        BrowserCapture, ClaudeDesktopCapture, ProcessStateCapture, VSCodeCapture,
+        capture_browser_pages, capture_terminal_state, capture_vm_snapshot, capture_webpage_url,
+        list_recent_vms, set_vm_status, AeonVmInfo, AppCapture, AppCaptureRegistry, BrowserCapture,
+        ClaudeDesktopCapture, ProcessStateCapture, VSCodeCapture,
     },
     hex_cid, parse_cid_hex, CaptureEngine, CaptureEntry, CaptureKind, CaptureRecord, CaptureSource,
     CID,
@@ -18,7 +19,7 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
@@ -27,6 +28,7 @@ use tokio_util::io::ReaderStream;
 const DEVICE_ONLINE_TTL_MS: u64 = 120_000;
 const DEVICE_KEEP_OFFLINE_MS: u64 = 10 * 60_000;
 const MAX_CAPTURE_UPLOAD_BYTES: usize = 1024 * 1024 * 1024;
+const MAX_VISIBLE_APP_CAPTURES: usize = 16;
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct FileMeta {
@@ -46,6 +48,9 @@ pub struct AppState {
     pub app_registry: Arc<AppCaptureRegistry>,
     pub devices: Arc<Mutex<DeviceRegistry>>,
     pub connect_urls: Vec<ConnectUrl>,
+    pub relay_url: Option<String>,
+    pub relay_space: String,
+    pub device_name: String,
 }
 
 #[derive(Deserialize)]
@@ -56,6 +61,13 @@ pub struct SavePayload {
 #[derive(Deserialize)]
 pub struct CaptureTextPayload {
     pub text: String,
+    pub title: Option<String>,
+    pub source: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct CaptureWebpagePayload {
+    pub url: String,
     pub title: Option<String>,
     pub source: Option<String>,
 }
@@ -209,7 +221,7 @@ impl DeviceRegistry {
 pub async fn status(State(state): State<AppState>) -> Json<StatusPayload> {
     let mut devices = vec![DeviceStatus {
         id: "local".to_string(),
-        name: "This PC".to_string(),
+        name: state.device_name.clone(),
         online: true,
         kind: "desktop".to_string(),
         endpoint: None,
@@ -457,18 +469,59 @@ pub async fn capture_text(
     State(state): State<AppState>,
     Json(payload): Json<CaptureTextPayload>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut entry = CaptureEntry::new(
-        payload.text.into_bytes(),
-        CaptureKind::Text,
-        source_from_peer_headers(&headers, CaptureSource::Manual),
-    );
-    if let Some(title) = payload.title {
-        entry = entry.with_title(&title);
-    }
-    if let Some(source) = payload.source {
+    let source = payload.source.clone();
+    let mut entry = if is_http_url(payload.text.trim()) {
+        tokio::task::spawn_blocking({
+            let text = payload.text.clone();
+            let title = payload.title.clone();
+            let source = source.clone().unwrap_or_else(|| "Shared URL".to_string());
+            move || capture_webpage_url(&text, title.as_deref(), &source, "shared-url")
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::BAD_REQUEST)?
+    } else {
+        let mut entry = CaptureEntry::new(
+            payload.text.into_bytes(),
+            CaptureKind::Text,
+            source_from_peer_headers(&headers, CaptureSource::Manual),
+        );
+        if let Some(title) = payload.title {
+            entry = entry.with_title(&title);
+        }
+        entry
+    };
+    if let Some(source) = source {
         entry.meta.app_name = Some(source);
     }
     annotate_peer_metadata(&mut entry, &headers);
+    stamp_capture_identity(&mut entry, &state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"ok": true, "cid": hex_cid(&cid)})))
+}
+
+pub async fn capture_webpage(
+    State(state): State<AppState>,
+    Json(payload): Json<CaptureWebpagePayload>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let source = payload
+        .source
+        .unwrap_or_else(|| "Manual webpage".to_string());
+    let mut entry = tokio::task::spawn_blocking(move || {
+        capture_webpage_url(
+            &payload.url,
+            payload.title.as_deref(),
+            &source,
+            "manual-url",
+        )
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::BAD_REQUEST)?;
     stamp_capture_identity(&mut entry, &state);
     let cid = state
         .capture_engine
@@ -529,6 +582,8 @@ pub async fn capture_processes(State(state): State<AppState>) -> Json<serde_json
             "cid": hex_cid(&cid),
             "captured": [hex_cid(&cid)],
             "process_count": count,
+            "relay": state.relay_url.is_some(),
+            "relay_space": state.relay_space.clone(),
             "message": format!("已捕获 {count} 个运行进程"),
         })),
         Err(error) => Json(serde_json::json!({"ok": false, "error": error})),
@@ -550,13 +605,18 @@ pub async fn capture_all(State(state): State<AppState>) -> Json<serde_json::Valu
     };
     let (app_captured, attempts) = capture_known_apps(&state).await;
     captured.extend(app_captured);
+    let (window_captured, window_attempts) = capture_visible_app_windows(&state).await;
+    captured.extend(window_captured);
 
     Json(serde_json::json!({
         "ok": errors.is_empty() || !captured.is_empty(),
         "captured": captured,
         "process_count": process_count,
         "attempts": attempts,
+        "window_attempts": window_attempts,
         "errors": errors,
+        "relay": state.relay_url.is_some(),
+        "relay_space": state.relay_space.clone(),
         "message": "全机状态已捕获",
     }))
 }
@@ -577,14 +637,26 @@ async fn capture_known_apps(state: &AppState) -> (Vec<String>, Vec<serde_json::V
             continue;
         }
 
-        let Some(mut entry) = handler.capture() else {
-            attempts.push(serde_json::json!({
-                "app": app,
-                "running": true,
-                "captured": null,
-                "reason": "no capturable state found",
-            }));
-            continue;
+        let mut entry = match aeon_capture::apps::capture_app_entry(handler.as_ref()) {
+            Ok(Some(entry)) => entry,
+            Ok(None) => {
+                attempts.push(serde_json::json!({
+                    "app": app,
+                    "running": true,
+                    "captured": null,
+                    "reason": "no capturable state found",
+                }));
+                continue;
+            }
+            Err(reason) => {
+                attempts.push(serde_json::json!({
+                    "app": app,
+                    "running": true,
+                    "captured": null,
+                    "reason": reason,
+                }));
+                continue;
+            }
         };
 
         stamp_capture_identity(&mut entry, state);
@@ -609,6 +681,64 @@ async fn capture_known_apps(state: &AppState) -> (Vec<String>, Vec<serde_json::V
     }
 
     (captured, attempts)
+}
+
+async fn capture_visible_app_windows(state: &AppState) -> (Vec<String>, Vec<serde_json::Value>) {
+    let windows = tokio::task::spawn_blocking(aeon_capture::screenshot::list_visible_windows)
+        .await
+        .unwrap_or_default();
+    let mut seen = HashSet::new();
+    let mut captured = Vec::new();
+    let mut attempts = Vec::new();
+
+    for window in windows {
+        if captured.len() >= MAX_VISIBLE_APP_CAPTURES {
+            break;
+        }
+        if !seen.insert(window.pid) {
+            continue;
+        }
+        let process_name = crate::process::process_name(window.pid)
+            .unwrap_or_else(|| format!("pid-{}", window.pid));
+        if is_ignored_window_process(&process_name) {
+            continue;
+        }
+        match capture_generic_app_state(window.pid, state).await {
+            Ok(value) => {
+                if let Some(cid) = value.get("cid").and_then(|cid| cid.as_str()) {
+                    captured.push(cid.to_string());
+                }
+                attempts.push(serde_json::json!({
+                    "pid": window.pid,
+                    "title": window.title,
+                    "process": process_name,
+                    "captured": value.get("cid").and_then(|cid| cid.as_str()),
+                    "screenshot": value.get("screenshot_cid").and_then(|cid| cid.as_str()),
+                    "reason": null,
+                }));
+            }
+            Err(error) => attempts.push(serde_json::json!({
+                "pid": window.pid,
+                "title": window.title,
+                "process": process_name,
+                "captured": null,
+                "reason": error,
+            })),
+        }
+    }
+
+    (captured, attempts)
+}
+
+fn is_ignored_window_process(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "explorer.exe"
+            | "searchhost.exe"
+            | "startmenuexperiencehost.exe"
+            | "shellexperiencehost.exe"
+            | "applicationframehost.exe"
+    )
 }
 
 async fn capture_process_inventory(state: &AppState) -> Result<(CID, usize), String> {
@@ -651,7 +781,10 @@ pub async fn list_process_entries() -> Json<Vec<crate::process::ProcessInfo>> {
 }
 
 pub async fn list_vm_entries() -> Json<Vec<AeonVmInfo>> {
-    Json(list_vms())
+    let vms = tokio::task::spawn_blocking(|| list_recent_vms(240))
+        .await
+        .unwrap_or_default();
+    Json(vms)
 }
 
 pub async fn capture_process(
@@ -688,19 +821,23 @@ async fn execute_capture_option(req: CaptureProcessRequest, state: &AppState) ->
             capture_app_entry(VSCodeCapture, state, "VS Code 工作区已捕获").await
         }
         "browser_tab" => capture_browser_tab(req.pid, state).await,
+        "browser_pages" => capture_browser_pages_option(req.pid, state).await,
         "browser_bookmarks" => capture_chrome_bookmarks(state).await,
+        "terminal_state" => capture_terminal_state_option(state).await,
         "obsidian_vault" => {
             capture_process_metadata(req.pid, state, Some("Obsidian 笔记库线索")).await
         }
         "metadata" => capture_process_metadata(req.pid, state, None).await,
         id if id.starts_with("metadata_") => capture_process_metadata(req.pid, state, None).await,
+        id if id.starts_with("app_state_") => capture_generic_app_state(req.pid, state).await,
         id if id.starts_with("snapshot_") => {
             let vm_id = id.trim_start_matches("snapshot_");
             capture_vm_action(vm_id, state, None, "VM 快照已捕获").await
         }
         id if id.starts_with("migrate_") => {
             let vm_id = id.trim_start_matches("migrate_");
-            capture_vm_action(vm_id, state, req.target_device.as_deref(), "已生成迁移快照").await
+            let target = req.target_device.as_deref().unwrap_or("aeon-relay");
+            capture_vm_action(vm_id, state, Some(target), "已生成迁移快照").await
         }
         id if id.starts_with("pause_") => {
             let vm_id = id.trim_start_matches("pause_");
@@ -726,8 +863,8 @@ async fn capture_app_entry<T>(
 where
     T: AppCapture,
 {
-    let mut entry = capture
-        .capture()
+    let mut entry = aeon_capture::apps::capture_app_entry(&capture)
+        .map_err(|err| err.to_string())?
         .ok_or_else(|| "没有找到可捕获的应用状态".to_string())?;
     stamp_capture_identity(&mut entry, state);
     let cid = state
@@ -744,11 +881,7 @@ where
 
 async fn capture_browser_tab(pid: u32, state: &AppState) -> Result<serde_json::Value, String> {
     let name = crate::process::process_name(pid).unwrap_or_default();
-    let browser = if name.to_ascii_lowercase().contains("firefox") {
-        "Firefox"
-    } else {
-        "Chrome"
-    };
+    let browser = browser_name_from_process(&name);
     capture_app_entry(
         BrowserCapture {
             browser: browser.to_string(),
@@ -757,6 +890,58 @@ async fn capture_browser_tab(pid: u32, state: &AppState) -> Result<serde_json::V
         "浏览器标签页已捕获",
     )
     .await
+}
+
+async fn capture_browser_pages_option(
+    pid: u32,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let name = crate::process::process_name(pid).unwrap_or_default();
+    let browser = browser_name_from_process(&name);
+    let mut entry = tokio::task::spawn_blocking(move || capture_browser_pages(browser, 30))
+        .await
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "没有找到浏览器页面历史".to_string())?;
+    stamp_capture_identity(&mut entry, state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "cid": hex_cid(&cid),
+        "message": "浏览器网页清单已捕获",
+    }))
+}
+
+fn browser_name_from_process(name: &str) -> &'static str {
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("firefox") {
+        "Firefox"
+    } else if lower.contains("edge") || lower.contains("msedge") {
+        "Edge"
+    } else {
+        "Chrome"
+    }
+}
+
+async fn capture_terminal_state_option(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut entry = tokio::task::spawn_blocking(capture_terminal_state)
+        .await
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "没有找到终端历史或运行中的终端".to_string())?;
+    stamp_capture_identity(&mut entry, state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "cid": hex_cid(&cid),
+        "message": "终端状态已捕获",
+    }))
 }
 
 async fn capture_chrome_bookmarks(state: &AppState) -> Result<serde_json::Value, String> {
@@ -838,6 +1023,75 @@ async fn capture_window_screenshot(
     }))
 }
 
+async fn capture_generic_app_state(
+    pid: u32,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let metadata =
+        crate::process::process_metadata(pid).ok_or_else(|| "process not found".to_string())?;
+    let process_name = metadata
+        .get("name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("process")
+        .to_string();
+    let windows = tokio::task::spawn_blocking(aeon_capture::screenshot::list_visible_windows)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|window| window.pid == pid)
+        .collect::<Vec<_>>();
+
+    let screenshot = capture_window_screenshot(pid, state).await.ok();
+    let screenshot_cid = screenshot
+        .as_ref()
+        .and_then(|value| value.get("cid"))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned);
+
+    let payload = serde_json::json!({
+        "capture_mode": "generic-application-state",
+        "captured_at": now_ms(),
+        "process": metadata,
+        "windows": windows,
+        "screenshot_cid": screenshot_cid,
+    });
+    let data = serde_json::to_vec_pretty(&payload).map_err(|err| err.to_string())?;
+    let mut entry = CaptureEntry::new(data, CaptureKind::ProcessState, CaptureSource::Manual)
+        .with_title(&format!("{process_name} application state"))
+        .with_summary(&format!(
+            "Captured process metadata{} for PID {pid}",
+            if screenshot_cid.is_some() {
+                " and window screenshot"
+            } else {
+                ""
+            }
+        ))
+        .with_app(&process_name);
+    entry.meta.extra.insert("pid".to_string(), pid.to_string());
+    entry.meta.extra.insert(
+        "capture_mode".to_string(),
+        "generic-application-state".to_string(),
+    );
+    if let Some(cid) = &screenshot_cid {
+        entry
+            .meta
+            .extra
+            .insert("screenshot_cid".to_string(), cid.clone());
+    }
+    stamp_capture_identity(&mut entry, state);
+    let cid = state
+        .capture_engine
+        .capture(entry)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "cid": hex_cid(&cid),
+        "screenshot_cid": screenshot_cid,
+        "message": "应用状态已捕获",
+    }))
+}
+
 async fn capture_process_metadata(
     pid: u32,
     state: &AppState,
@@ -880,12 +1134,23 @@ async fn capture_vm_action(
     message: &str,
 ) -> Result<serde_json::Value, String> {
     let mut entry = capture_vm_snapshot(vm_id)?;
-    if let Some(target) = target_device.filter(|target| !target.trim().is_empty()) {
+    let transfer_target = target_device.filter(|target| !target.trim().is_empty());
+    if transfer_target.is_some() && state.relay_url.is_none() {
+        return Err(
+            "AEON Relay is not enabled; start with scripts\\aeon.ps1 to transfer VM snapshots"
+                .to_string(),
+        );
+    }
+    if let Some(target) = transfer_target {
         entry.meta.title = Some(format!("VM 迁移快照 {vm_id} -> {target}"));
         entry
             .meta
             .extra
             .insert("migration_target".to_string(), target.to_string());
+        entry
+            .meta
+            .extra
+            .insert("transfer_mode".to_string(), "aeon-relay".to_string());
     }
     stamp_capture_identity(&mut entry, state);
     let cid = state
@@ -898,7 +1163,9 @@ async fn capture_vm_action(
         "cid": hex_cid(&cid),
         "message": message,
         "vm_id": vm_id,
-        "target": target_device,
+        "target": transfer_target,
+        "relay": state.relay_url.is_some(),
+        "relay_space": state.relay_space.clone(),
     }))
 }
 
@@ -1123,6 +1390,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/processes", get(list_process_entries))
         .route("/api/vms", get(list_vm_entries))
         .route("/api/capture/text", post(capture_text))
+        .route("/api/capture/webpage", post(capture_webpage))
         .route("/api/capture/drop", post(capture_drop))
         .route("/api/capture/apps", post(capture_apps))
         .route("/api/capture/processes", post(capture_processes))
@@ -1304,6 +1572,10 @@ fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn is_http_url(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
 }
 
 fn stamp_capture_identity(entry: &mut CaptureEntry, state: &AppState) {

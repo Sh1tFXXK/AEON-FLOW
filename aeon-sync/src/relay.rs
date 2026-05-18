@@ -1,4 +1,4 @@
-use aeon_capture::{CaptureEngine, CaptureEntry, CaptureKind, CaptureSource};
+use aeon_capture::{hex_cid, CaptureEngine, CaptureEntry, CaptureKind, CaptureSource};
 use axum::{
     extract::{DefaultBodyLimit, Multipart, Query, State},
     http::{HeaderMap, StatusCode},
@@ -79,7 +79,7 @@ struct RelayPullQuery {
     limit: Option<usize>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RelayPushPayload {
     item: RelayItem,
 }
@@ -89,6 +89,13 @@ struct RelayPullResponse {
     items: Vec<RelayItem>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RelayPushResponse {
+    pub ok: bool,
+    pub relay_id: Option<String>,
+    pub cid: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct RelayPullConfig {
     pub url: String,
@@ -96,6 +103,16 @@ pub struct RelayPullConfig {
     pub device_id: String,
     pub device_name: String,
     pub cursor_path: PathBuf,
+    pub capture_engine: Arc<CaptureEngine>,
+}
+
+#[derive(Clone)]
+pub struct RelayPushConfig {
+    pub url: String,
+    pub space: String,
+    pub device_id: String,
+    pub device_name: String,
+    pub device_kind: String,
     pub capture_engine: Arc<CaptureEngine>,
 }
 
@@ -425,6 +442,94 @@ pub fn spawn_pull_loop(config: RelayPullConfig) {
     });
 }
 
+pub fn spawn_push_loop(config: RelayPushConfig) {
+    let mut rx = config.capture_engine.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(entry) if should_push_to_relay(&entry) => {
+                    match push_capture_entry(&config, &entry).await {
+                        Ok(response) => tracing::debug!(
+                            "relay pushed cid={} relay_id={}",
+                            response.cid.as_deref().unwrap_or(""),
+                            response.relay_id.as_deref().unwrap_or("")
+                        ),
+                        Err(err) => tracing::debug!("relay push failed: {err}"),
+                    }
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::debug!("relay push lagged by {skipped} capture events");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
+pub async fn push_capture_entry(
+    config: &RelayPushConfig,
+    entry: &CaptureEntry,
+) -> Result<RelayPushResponse, Box<dyn std::error::Error + Send + Sync>> {
+    let item = relay_item_from_entry(config, entry);
+    let response = relay_push_http(&config.url, item).await?;
+    if !response.ok {
+        return Err(boxed_error("relay rejected push"));
+    }
+    Ok(response)
+}
+
+fn should_push_to_relay(entry: &CaptureEntry) -> bool {
+    !entry.data.is_empty()
+        && !matches!(entry.source, CaptureSource::PeerSync { .. })
+        && !entry.meta.extra.contains_key("relay_id")
+}
+
+fn relay_item_from_entry(config: &RelayPushConfig, entry: &CaptureEntry) -> RelayItem {
+    let peer = PeerHeaders {
+        device_id: config.device_id.clone(),
+        device_name: config.device_name.clone(),
+        device_kind: config.device_kind.clone(),
+    };
+    let mut item = make_relay_item(
+        sanitize_key(&config.space, "default"),
+        peer,
+        entry.data.clone(),
+        entry.kind.key().to_string(),
+        entry.meta.title.clone(),
+        relay_source(entry),
+        relay_filename(entry),
+        entry.mime(),
+    );
+    item.captured_at = entry.captured_at;
+    item.cid = hex_cid(&entry.cid);
+    item.id = relay_id(item.captured_at, &item.cid, &item.from_device_id);
+    item
+}
+
+fn relay_source(entry: &CaptureEntry) -> Option<String> {
+    entry.meta.app_name.clone().or_else(|| match &entry.source {
+        CaptureSource::DragDrop => Some("DragDrop".to_string()),
+        CaptureSource::Clipboard => Some("Clipboard".to_string()),
+        CaptureSource::Screenshot => Some("Screenshot".to_string()),
+        CaptureSource::FileWatch { path } => Some(format!("FileWatch: {path}")),
+        CaptureSource::AppApi { app } => Some(app.clone()),
+        CaptureSource::ShareMenu => Some("ShareMenu".to_string()),
+        CaptureSource::Manual => Some("AEON".to_string()),
+        CaptureSource::PeerSync { .. } => None,
+    })
+}
+
+fn relay_filename(entry: &CaptureEntry) -> Option<String> {
+    entry
+        .meta
+        .file_path
+        .as_deref()
+        .and_then(|path| Path::new(path).file_name())
+        .and_then(|name| name.to_str())
+        .map(ToOwned::to_owned)
+}
+
 async fn pull_once(
     config: &RelayPullConfig,
     cursor: Option<&str>,
@@ -464,6 +569,43 @@ async fn relay_pull_http(
         host = endpoint.host_header()
     );
     stream.write_all(request.as_bytes()).await?;
+
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await?;
+    let (headers, body) = split_http_response(&response).map_err(boxed_error)?;
+    if !headers.starts_with("HTTP/1.1 200") && !headers.starts_with("HTTP/1.0 200") {
+        let status = headers.lines().next().unwrap_or("HTTP error");
+        return Err(boxed_error(status.to_string()));
+    }
+
+    let body = if headers
+        .to_ascii_lowercase()
+        .contains("transfer-encoding: chunked")
+    {
+        decode_chunked_body(body).map_err(boxed_error)?
+    } else {
+        body.to_vec()
+    };
+
+    Ok(serde_json::from_slice(&body)?)
+}
+
+async fn relay_push_http(
+    base_url: &str,
+    item: RelayItem,
+) -> Result<RelayPushResponse, Box<dyn std::error::Error + Send + Sync>> {
+    let endpoint = parse_http_url(base_url).map_err(boxed_error)?;
+    let path = join_path(&endpoint.base_path, "/api/relay/push");
+    let body = serde_json::to_vec(&RelayPushPayload { item })?;
+
+    let mut stream = TcpStream::connect((endpoint.host.as_str(), endpoint.port)).await?;
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n",
+        host = endpoint.host_header(),
+        len = body.len()
+    );
+    stream.write_all(request.as_bytes()).await?;
+    stream.write_all(&body).await?;
 
     let mut response = Vec::new();
     stream.read_to_end(&mut response).await?;
@@ -668,8 +810,24 @@ fn kind_from_relay_item(item: &RelayItem, data: &[u8]) -> CaptureKind {
 
     match item.kind.as_str() {
         "Conversation" => CaptureKind::Conversation,
+        "ProcessState" => CaptureKind::ProcessState,
+        "VmSnapshot" => CaptureKind::VmSnapshot,
         "Clipboard" => CaptureKind::Clipboard,
         "Webpage" => CaptureKind::Webpage,
+        "Code" => CaptureKind::Code {
+            language: item
+                .mime
+                .strip_prefix("text/x-")
+                .unwrap_or("code")
+                .to_string(),
+        },
+        "Document" => CaptureKind::Document {
+            format: item
+                .mime
+                .strip_prefix("application/")
+                .unwrap_or("document")
+                .to_string(),
+        },
         "Image" => {
             let format = item
                 .mime

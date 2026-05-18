@@ -79,6 +79,7 @@ async fn main() {
         .then(|| format!("http://127.0.0.1:{}", start_config.relay.port));
     let relay_url = start_config.relay_url.clone().or(embedded_relay_url);
     let relay_space = start_config.relay.space.clone();
+    let device_name = local_device_name();
     let connect_urls = connection_urls(
         port,
         start_config.with_relay.then_some(start_config.relay.port),
@@ -89,7 +90,7 @@ async fn main() {
         ui_port: port,
         relay_port: start_config.with_relay.then_some(start_config.relay.port),
         device_id: hex_bytes(&device_id),
-        device_name: local_device_name(),
+        device_name: device_name.clone(),
         identity_short: identity.id_short(),
     });
     if let Some(url) = relay_url.clone() {
@@ -97,11 +98,20 @@ async fn main() {
             url: url.clone(),
             space: relay_space.clone(),
             device_id: hex_bytes(&device_id),
-            device_name: local_device_name(),
+            device_name: device_name.clone(),
             cursor_path: aeon_dir.join("relay-cursor.txt"),
             capture_engine: capture_engine.clone(),
         });
         println!("AEON Relay pull enabled: {url} (space: {relay_space})");
+        relay::spawn_push_loop(relay::RelayPushConfig {
+            url,
+            space: relay_space.clone(),
+            device_id: hex_bytes(&device_id),
+            device_name: device_name.clone(),
+            device_kind: "desktop".to_string(),
+            capture_engine: capture_engine.clone(),
+        });
+        println!("AEON Relay push enabled (space: {relay_space})");
     }
 
     let state = server::AppState {
@@ -114,6 +124,9 @@ async fn main() {
         app_registry,
         devices: Arc::new(Mutex::new(server::DeviceRegistry::default())),
         connect_urls: connect_urls.clone(),
+        relay_url,
+        relay_space,
+        device_name,
     };
 
     let app = server::create_router(state);
