@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
+mod account_profiles;
 mod bridge;
 mod operation_context;
 mod process;
@@ -41,6 +42,10 @@ async fn main() {
     let operation_context = Arc::new(Mutex::new(
         operation_context::ContextStore::new(aeon_dir.join("context.json"))
             .expect("failed to open operation context store"),
+    ));
+    let account_profiles = Arc::new(Mutex::new(
+        account_profiles::AccountProfileStore::new(aeon_dir.join("account-profiles.json"))
+            .expect("failed to open account profile store"),
     ));
 
     let identity_path = aeon_dir.join("identity");
@@ -132,6 +137,7 @@ async fn main() {
         event_log,
         app_registry,
         operation_context,
+        account_profiles,
         devices: Arc::new(Mutex::new(server::DeviceRegistry::default())),
         connect_urls: connect_urls.clone(),
         relay_url,

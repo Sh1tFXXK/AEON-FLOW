@@ -108,6 +108,12 @@ mod tests {
             operation_context: Arc::new(Mutex::new(
                 crate::operation_context::ContextStore::new(dir.join("context.json")).unwrap(),
             )),
+            account_profiles: Arc::new(Mutex::new(
+                crate::account_profiles::AccountProfileStore::new(
+                    dir.join("account-profiles.json"),
+                )
+                .unwrap(),
+            )),
             devices: Arc::new(Mutex::new(DeviceRegistry::default())),
             connect_urls: Vec::new(),
             relay_url: None,

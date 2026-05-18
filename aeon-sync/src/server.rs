@@ -48,6 +48,7 @@ pub struct AppState {
     pub event_log: Arc<Mutex<EventLog>>,
     pub app_registry: Arc<AppCaptureRegistry>,
     pub operation_context: Arc<Mutex<crate::operation_context::ContextStore>>,
+    pub account_profiles: Arc<Mutex<crate::account_profiles::AccountProfileStore>>,
     pub devices: Arc<Mutex<DeviceRegistry>>,
     pub connect_urls: Vec<ConnectUrl>,
     pub relay_url: Option<String>,
@@ -1460,6 +1461,15 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/context/ai-session",
             post(crate::operation_context::upsert_ai_session),
+        )
+        .route(
+            "/api/accounts",
+            get(crate::account_profiles::list_accounts)
+                .post(crate::account_profiles::upsert_account),
+        )
+        .route(
+            "/api/accounts/:id/browser-plan",
+            post(crate::account_profiles::browser_launch_plan),
         )
         .route("/api/entries", get(list_entries))
         .route("/api/entry/:cid", get(get_entry))
