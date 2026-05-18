@@ -1476,6 +1476,7 @@ pub fn create_router(state: AppState) -> Router {
             "/api/vault/entries",
             get(crate::vault::list_entries).post(crate::vault::add_entry),
         )
+        .route("/api/query", post(crate::query::query))
         .route("/api/entries", get(list_entries))
         .route("/api/entry/:cid", get(get_entry))
         .route("/api/entry/:cid/edit", post(edit_entry))

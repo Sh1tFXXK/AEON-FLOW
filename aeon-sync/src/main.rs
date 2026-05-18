@@ -9,6 +9,7 @@ mod account_profiles;
 mod bridge;
 mod operation_context;
 mod process;
+mod query;
 mod relay;
 mod server;
 mod vault;
