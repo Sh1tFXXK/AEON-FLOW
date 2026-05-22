@@ -7,127 +7,925 @@
 <style>
 :root{
   color-scheme:dark;
-  --bg:#10110f;
-  --panel:#171914;
-  --panel-2:#20231b;
-  --panel-3:#262a21;
-  --line:#34372c;
-  --text:#f2f0e7;
-  --muted:#aaa694;
-  --green:#93d977;
-  --gold:#e3bb63;
-  --cyan:#7fc7c3;
-  --blue:#7bb8ff;
-  --violet:#bb9cff;
-  --red:#ef8b82;
+  --bg:#04070a;
+  --panel-bg:#090f13;
+  --border:#182e38;
+  --border-active:#00ff88;
+  --text:#b2eed6;
+  --muted:#488277;
+  --green:#00ff88;
+  --cyan:#00e5ff;
+  --yellow:#ffe600;
+  --orange:#ff9100;
+  --magenta:#ff007f;
+  --purple:#b82eff;
+  --red:#ff3355;
+  --blue:#00aaff;
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,"Segoe UI",system-ui,sans-serif;letter-spacing:0}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:'JetBrains Mono', 'Fira Code', 'Courier New', Courier, monospace;
+  font-style:italic;
+  font-size:13px;
+  line-height:1.4;
+  overflow:hidden;
+}
 button,input,textarea{font:inherit}
 button{cursor:pointer}
-.top{height:56px;display:flex;align-items:center;gap:16px;padding:0 18px;border-bottom:1px solid var(--line);background:#12140f}
-.brand{font-weight:750;white-space:nowrap}.identity{color:var(--muted);font-size:13px;margin-left:auto}
-.iconBtn{height:34px;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:6px;padding:0 12px;cursor:pointer}
-.iconBtn:disabled{opacity:.5;cursor:default}
-.iconBtn.primary{background:var(--gold);border-color:var(--gold);color:#171101}
-.tabs{height:100%;display:flex;align-items:center;gap:4px;padding:0;background:transparent}
-.tab{height:36px;padding:0 14px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--muted)}
-.tab.active{color:var(--green);border-color:var(--green);background:#14180f}
-.tabContent{display:none;height:calc(100vh - 56px);min-height:0}
-.tabContent.active{display:block}
-.shell{display:grid;grid-template-columns:minmax(300px,420px) 1fr;height:100%;min-height:0}
-.streamPane{border-right:1px solid var(--line);min-width:0;display:flex;flex-direction:column}
-.detailPane{min-width:0;display:flex;flex-direction:column}
-.filter{padding:14px;border-bottom:1px solid var(--line);display:grid;gap:10px;background:var(--panel)}
-.search{width:100%;height:38px;border:1px solid var(--line);background:#0d0e0b;color:var(--text);padding:0 12px;border-radius:6px}
-.search:focus,.editor:focus{outline:1px solid var(--green);outline-offset:0}
-.pills{display:flex;gap:8px;overflow:auto;padding-bottom:2px}
-.pill{height:30px;border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:0 12px;white-space:nowrap}
-.pill.active{color:#0d120b;background:var(--green);border-color:var(--green)}
-.stream{overflow:auto;min-height:0}
-.entry{display:grid;grid-template-columns:72px 1fr;gap:12px;padding:14px;border-bottom:1px solid #292c23;cursor:pointer;min-width:0}
-.entry:hover,.entry.active{background:var(--panel-2)}
-.time{font-size:12px;color:var(--muted);white-space:nowrap}
-.entryBody{min-width:0}.entryTitle{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.summary{color:var(--muted);font-size:13px;margin-top:4px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.source{display:flex;gap:8px;align-items:center;margin-top:8px;color:var(--muted);font-size:12px;min-width:0}
-.badge{height:22px;display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:0 8px;color:var(--cyan);white-space:nowrap}
-.detailHead{padding:18px 20px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:1fr auto;gap:14px;background:#12140f}
-.detailTitle{font-size:20px;font-weight:750;overflow-wrap:anywhere}.detailMeta{color:var(--muted);font-size:13px;margin-top:6px}
-.actions{display:flex;gap:8px;align-items:start;flex-wrap:wrap}.detailBody{overflow:auto;min-height:0;padding:20px}
-.empty{height:100%;display:grid;place-items:center;color:var(--muted);text-align:center;padding:18px}
-.previewText{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;background:#0b0c09;border:1px solid var(--line);border-radius:6px;padding:14px;line-height:1.55;min-height:220px}
-.previewImage{max-width:100%;height:auto;border:1px solid var(--line);border-radius:6px;background:#0b0c09}
-.metaGrid{display:grid;grid-template-columns:140px 1fr;gap:8px 14px;margin-top:16px;color:var(--muted);font-size:13px}
-.metaGrid div:nth-child(odd){color:#c8c3ad}.cid{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere;color:var(--green)}
-.editor{width:100%;min-height:360px;resize:vertical;border:1px solid var(--line);border-radius:6px;background:#0b0c09;color:var(--text);padding:14px;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
-.processPage{height:100%;display:flex;flex-direction:column;min-height:0}
-.processToolbar{display:grid;grid-template-columns:1fr auto auto auto;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line);background:#12140f}
-.processList{overflow:auto;min-height:0}
-.procGroup{border-bottom:1px solid var(--line)}
-.procGroupTitle{padding:10px 16px 6px;font-size:12px;letter-spacing:.02em;font-weight:700;color:var(--muted)}
-.procGroup summary{list-style:none}.procGroup summary::-webkit-details-marker{display:none}
-.procItem{padding:12px 16px;border-top:1px solid #292c23;background:transparent}
-.procItem:hover{background:var(--panel-2)}
-.procMain{display:flex;align-items:flex-start;gap:12px;min-width:0}
-.procIcon{width:28px;height:28px;display:grid;place-items:center;font-size:20px;flex:0 0 auto}
-.procInfo{min-width:0;flex:1}.procName{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.procExe{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
-.procStats{display:flex;gap:12px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:5px}
-.cpuTrack{width:48px;height:5px;border-radius:999px;background:#0d0e0b;display:inline-flex;vertical-align:middle;margin-right:5px;overflow:hidden}
-.cpuBar{height:100%;background:var(--green);border-radius:999px}
-.procActions{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 0 40px}
-.captureBtn{min-height:30px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);padding:4px 9px;font-size:12px}
-.btnDeep{background:#142642;border-color:#274b83;color:var(--blue)}
-.btnScreenshot{background:#183016;border-color:#2c6428;color:#9df28a}
-.btnMigrate{background:#2b2044;border-color:#57448e;color:var(--violet)}
-.btnPause{background:#3a2b18;border-color:#82612b;color:#ffc36d}
-.btnSnapshot{background:#183638;border-color:#2f7478;color:#86ffff}
-.btnMeta{background:#242424;border-color:#4a4a4a;color:#c8c8c8}
-.procResult{margin:8px 0 0 40px;font-size:12px;color:var(--muted)}
-.captureSuccess{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--green)}
-.captureError{color:var(--red)}
-.devicesPage{padding:18px;max-width:760px}
-.deviceRow{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:12px 0;gap:14px;min-width:0}
-.deviceRow>div{min-width:0}
-.connectBlock{border:1px solid var(--line);border-radius:8px;background:var(--panel);margin:12px 0 18px;overflow:hidden}
-.connectBlock .procGroupTitle{padding:10px 12px;border-bottom:1px solid var(--line)}
-.connectRow{display:grid;grid-template-columns:minmax(180px,220px) minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 12px;border-top:1px solid #292c23;min-width:0}
-.connectRow:first-child{border-top:0}
-.connectRow .badge{min-width:0;width:100%;justify-content:flex-start;overflow:hidden;text-overflow:ellipsis}
-.connectUrl{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--green);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.connectHint{color:var(--muted);font-size:12px;margin:0 0 10px}
-.dropOverlay{position:fixed;inset:0;background:rgba(16,17,15,.88);display:none;place-items:center;z-index:8;border:2px dashed var(--green);color:var(--green);font-size:22px;font-weight:750}
-.dropOverlay.show{display:grid}
-.toast{position:fixed;right:18px;bottom:18px;z-index:9;max-width:min(420px,calc(100vw - 36px));padding:12px 14px;border:1px solid var(--line);border-radius:6px;background:#202319;color:var(--text);box-shadow:0 14px 40px rgba(0,0,0,.28);display:none}
-.toast.show{display:block}
-.modal{position:fixed;inset:0;background:rgba(10,11,9,.72);z-index:10;display:none;align-items:center;justify-content:center;padding:20px}
-.modal.show{display:flex}.modalPanel{width:min(760px,100%);max-height:min(760px,calc(100vh - 40px));display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 20px 70px rgba(0,0,0,.38);min-height:0}
-.modalHead{display:flex;align-items:center;gap:12px;padding:14px;border-bottom:1px solid var(--line)}.modalTitle{font-weight:750}.modalHead .search{flex:1}
+
+/* Non-italic components */
+.procIcon, .badge, .cpuTrack, .emoji {
+  font-style: normal;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* Tmux Header */
+.top{
+  height: 32px;
+  background: var(--panel-bg);
+  border-bottom: none;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  font-family: inherit;
+  font-size: 12px;
+  overflow: hidden;
+}
+.brand{
+  background: var(--green);
+  color: #000000;
+  padding: 0 16px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  font-style: normal;
+}
+.tabs{
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 100%;
+}
+.tab{
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 16px;
+  cursor: pointer;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-radius: 0;
+  display: inline-flex;
+  align-items: center;
+  transition: all 0.1s ease;
+  border-bottom: 2px solid transparent;
+}
+.tab.active{
+  color: var(--blue);
+  font-weight: 800;
+  border-bottom: 2px solid var(--blue);
+}
+.tab:hover:not(.active){
+  color: var(--text);
+}
+.identity{
+  margin-left: auto;
+  padding: 0 16px;
+  color: var(--yellow);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+.clock{
+  color: var(--cyan);
+  padding: 0 16px;
+  font-weight: 700;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  background: transparent;
+}
+
+/* Tab content layouts */
+.tabContent{
+  display:none;
+  height:calc(100vh - 32px);
+  min-height:0;
+}
+.tabContent.active{
+  display:block;
+}
+
+/* Shell stream layout */
+.shell{
+  display:grid;
+  grid-template-columns:minmax(320px,440px) 1fr;
+  height:100%;
+  min-height:0;
+  padding: 8px;
+  gap: 8px;
+  background: var(--bg);
+}
+.streamPane{
+  border: none;
+  background:var(--panel-bg);
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+}
+.detailPane{
+  border: none;
+  background:var(--panel-bg);
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+}
+
+/* Pane Header */
+.pane-header {
+  height: 32px;
+  background: transparent;
+  color: var(--cyan);
+  font-weight: 800;
+  font-size: 11px;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 0 12px;
+  letter-spacing: 1px;
+}
+.pane-header::before {
+  content: '■ ';
+  color: var(--green);
+  margin-right: 4px;
+}
+.pane-subtitle {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+/* Filters */
+.filter{
+  padding:12px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  background:transparent;
+}
+.search{
+  width:100%;
+  height:36px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color:var(--text);
+  padding:0 4px;
+  border-radius:0;
+}
+.search:focus{
+  outline:none;
+  border-bottom-color:var(--green);
+}
+
+.pills{
+  display:flex;
+  gap:6px;
+  overflow-x:auto;
+  padding-bottom:2px;
+}
+.pill{
+  border: none;
+  background:transparent;
+  color:var(--muted);
+  border-radius:0;
+  padding:4px 8px;
+  font-size:11px;
+  cursor:pointer;
+  text-transform:uppercase;
+  font-weight:700;
+  transition:all 0.1s ease;
+  white-space:nowrap;
+  border-bottom: 2px solid transparent;
+}
+.pill:hover:not(.active){
+  color:var(--text);
+}
+.pill.active{
+  color:var(--green);
+  border-bottom: 2px solid var(--green);
+}
+
+/* Stream list */
+.stream{
+  overflow-y:auto;
+  flex:1;
+  background:transparent;
+  padding: 4px 8px;
+}
+.entry{
+  display:grid;
+  grid-template-columns:80px 1fr;
+  gap:12px;
+  padding:12px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(24, 46, 56, 0.05);
+  margin-bottom: 6px;
+  cursor:pointer;
+  transition:all 0.1s ease;
+}
+.entry:nth-child(even) {
+  background: rgba(24, 46, 56, 0.1);
+}
+.entry:hover{
+  background: rgba(24, 46, 56, 0.15);
+}
+.entry.active{
+  background: rgba(24, 46, 56, 0.22);
+}
+.time{
+  font-size:11px;
+  color:var(--muted);
+  white-space:nowrap;
+  background: transparent;
+  padding: 2px 4px;
+  text-align:left;
+  align-self:start;
+}
+.entryBody{
+  min-width:0;
+}
+.entryTitle{
+  font-weight:700;
+  font-size:13px;
+  color:var(--text);
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.summary{
+  color:var(--muted);
+  font-size:12px;
+  margin-top:6px;
+  line-height:1.4;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+}
+.source{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  margin-top:8px;
+  color:var(--muted);
+  font-size:11px;
+}
+.badge{
+  font-size:10px;
+  font-weight:800;
+  padding:2px 6px;
+  border:1px solid currentColor;
+  border-radius:0;
+  background:rgba(0, 0, 0, 0.4);
+  text-transform:uppercase;
+  display:inline-flex;
+  align-items:center;
+}
+
+/* Detail pane content */
+.detailHead{
+  padding:16px;
+  border-bottom: 1px solid rgba(24, 46, 56, 0.2);
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  background:transparent;
+  gap:16px;
+}
+.detailTitle{
+  font-size:16px;
+  font-weight:800;
+  color:var(--yellow);
+  word-break:break-all;
+}
+.detailMeta{
+  color:var(--muted);
+  font-size:11px;
+  margin-top:4px;
+}
+.actions{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+.detailBody{
+  padding:16px;
+  overflow-y:auto;
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  background:transparent;
+}
+.empty{
+  height:100%;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  color:var(--muted);
+  text-align:center;
+  padding:20px;
+}
+
+/* Custom buttons */
+.iconBtn, .captureBtn{
+  font-family:inherit;
+  font-weight:700;
+  font-size:11px;
+  text-transform:uppercase;
+  border: none;
+  border-bottom: 2px solid var(--border);
+  background: rgba(24, 46, 56, 0.2);
+  color:var(--text);
+  padding:6px 12px;
+  border-radius:0;
+  transition:all 0.15s ease;
+  cursor:pointer;
+  outline:none;
+}
+.iconBtn:hover:not(:disabled), .captureBtn:hover:not(:disabled){
+  background:var(--green);
+  color:#000000;
+  border-bottom-color:var(--green);
+}
+.iconBtn.primary{
+  background: rgba(0, 255, 136, 0.12);
+  color: var(--green);
+  border-bottom-color:var(--green);
+}
+.iconBtn.primary:hover:not(:disabled){
+  background:var(--green);
+  color:#000000;
+  border-bottom-color:var(--green);
+}
+.iconBtn:disabled, .captureBtn:disabled{
+  opacity:0.3;
+  cursor:not-allowed;
+  border-bottom-color: var(--border) !important;
+  background: transparent !important;
+  color: var(--muted) !important;
+}
+
+/* Previews */
+.previewText{
+  margin:0;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  background: rgba(9, 15, 19, 0.6);
+  border: none;
+  border-left:3px solid var(--green);
+  border-radius:0;
+  padding:14px;
+  line-height:1.5;
+  font-family:inherit;
+  font-size:13px;
+  color:var(--text);
+}
+.previewImage{
+  max-width:100%;
+  height:auto;
+  border: none;
+  border-radius:0;
+  background:#090a0d;
+  display:block;
+  margin:0 auto 16px;
+}
+
+/* Meta grids */
+.metaGrid{
+  display:grid;
+  grid-template-columns:150px 1fr;
+  border: none;
+  background: transparent;
+  margin-top: 16px;
+  font-size: 12px;
+  gap: 6px 12px;
+}
+.metaGrid > div {
+  padding: 4px 0;
+  border-bottom: none;
+  border-right: none;
+}
+.metaGrid > div:nth-child(2n) {
+  border-right: none;
+  font-family: inherit;
+  word-break: break-all;
+  color: var(--text);
+}
+.metaGrid div:nth-child(odd) {
+  color: var(--muted);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.cid{
+  color:var(--green);
+  font-weight:700;
+}
+
+.editor{
+  width:100%;
+  min-height:360px;
+  resize:vertical;
+  border: none;
+  border-bottom: 2px solid var(--border);
+  background: rgba(9, 15, 19, 0.6);
+  color:var(--text);
+  padding:14px;
+  font-family:inherit;
+  line-height:1.5;
+  outline:none;
+}
+.editor:focus{
+  border-bottom-color:var(--green);
+}
+
+/* Process Page */
+.processPage{
+  height:100%;
+  display:flex;
+  flex-direction:column;
+  padding:8px;
+  background:var(--bg);
+}
+.processContainer{
+  flex: 1;
+  border: none;
+  background: var(--panel-bg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.processToolbar{
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  padding:10px 12px;
+  border-bottom: 1px solid rgba(24, 46, 56, 0.4);
+  background: transparent;
+  align-items:center;
+}
+.processToolbar .search{
+  flex:1;
+  min-width:200px;
+}
+.processList{
+  overflow-y:auto;
+  flex:1;
+  background:transparent;
+  padding: 4px 8px;
+}
+
+/* Collapsible Process Groups (Details) */
+.procGroup{
+  border-bottom: none;
+  margin-bottom: 8px;
+}
+.procGroupTitle{
+  padding:10px 14px;
+  font-size:12px;
+  font-weight:800;
+  text-transform:uppercase;
+  background: rgba(24, 46, 56, 0.15);
+  color:var(--muted);
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  user-select:none;
+  border-radius: 4px;
+}
+.procGroup summary {
+  list-style:none;
+  outline:none;
+}
+.procGroup summary::-webkit-details-marker {
+  display:none;
+}
+.procGroup summary::before {
+  content: '▶ ';
+  display: inline-block;
+  margin-right: 8px;
+  transition: transform 0.15s ease;
+  color: var(--muted);
+  font-style: normal;
+}
+.procGroup[open] summary::before {
+  content: '▼ ';
+}
+
+/* Process list items */
+.procItem{
+  padding:12px 14px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(24, 46, 56, 0.05);
+  margin-bottom: 6px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.procItem:nth-child(even) {
+  background: rgba(24, 46, 56, 0.1);
+}
+.procItem:hover{
+  background: rgba(24, 46, 56, 0.15);
+}
+.procMain{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.procIcon{
+  font-size:16px;
+  width:24px;
+  text-align:center;
+  color:var(--blue);
+}
+.procInfo{
+  flex:1;
+  min-width:0;
+  display:grid;
+  grid-template-columns:220px 1fr;
+  gap:12px;
+  align-items:center;
+}
+.procName{
+  font-weight:700;
+  color:var(--text);
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.procExe{
+  font-size:11px;
+  color:var(--muted);
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.procStats{
+  grid-column: 1 / -1;
+  display:flex;
+  gap:16px;
+  align-items:center;
+  font-size:11px;
+  color:var(--text);
+  margin-top:4px;
+  flex-wrap:wrap;
+}
+
+/* Retro repeating gradient CPU meter */
+.cpuTrack{
+  width:80px;
+  height:8px;
+  background: rgba(24, 46, 56, 0.2);
+  border: none;
+  display:inline-flex;
+  margin-right:8px;
+  overflow:hidden;
+  position:relative;
+  vertical-align:middle;
+}
+.cpuBar{
+  height:100%;
+  width:0%;
+  transition:width 0.2s ease;
+}
+.cpuBar.low {
+  background: repeating-linear-gradient(90deg, var(--green), var(--green) 3px, transparent 3px, transparent 5px);
+}
+.cpuBar.medium {
+  background: repeating-linear-gradient(90deg, var(--orange), var(--orange) 3px, transparent 3px, transparent 5px);
+}
+.cpuBar.high {
+  background: repeating-linear-gradient(90deg, var(--red), var(--red) 3px, transparent 3px, transparent 5px);
+}
+
+.procActions{
+  display:flex;
+  gap:8px;
+  margin-left:36px;
+  flex-wrap:wrap;
+}
+
+/* Colorful action button borders */
+.btnDeep{border-bottom:2px solid var(--blue); color:var(--blue); background:transparent;}
+.btnDeep:hover:not(:disabled){background:var(--blue); color:#000000;}
+
+.btnScreenshot{border-bottom:2px solid var(--green); color:var(--green); background:transparent;}
+.btnScreenshot:hover:not(:disabled){background:var(--green); color:#000000;}
+
+.btnMigrate{border-bottom:2px solid var(--purple); color:var(--purple); background:transparent;}
+.btnMigrate:hover:not(:disabled){background:var(--purple); color:#000000;}
+
+.btnPause{border-bottom:2px solid var(--orange); color:var(--orange); background:transparent;}
+.btnPause:hover:not(:disabled){background:var(--orange); color:#000000;}
+
+.btnSnapshot{border-bottom:2px solid var(--cyan); color:var(--cyan); background:transparent;}
+.btnSnapshot:hover:not(:disabled){background:var(--cyan); color:#000000;}
+
+.btnMeta{border-bottom:2px solid var(--muted); color:var(--text); background:transparent;}
+.btnMeta:hover:not(:disabled){background:var(--text); color:#000000;}
+
+.procResult{
+  margin-left:36px;
+  font-size:12px;
+  color:var(--yellow);
+}
+.captureSuccess{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  color:var(--green);
+  font-weight:700;
+}
+.captureError{
+  color:var(--red);
+  font-weight:700;
+}
+
+/* Devices Page Layout */
+.devicesPage{
+  padding:8px;
+  height:100%;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  background:var(--bg);
+}
+.devicePanel {
+  border: none;
+  background: var(--panel-bg);
+  display: flex;
+  flex-direction: column;
+}
+.connectHint{
+  color:var(--text);
+  font-size:12px;
+  padding:10px 14px;
+  border-left:4px solid var(--blue);
+  background:var(--panel-bg);
+  margin-bottom:4px;
+}
+.connectBlock-new{
+  background: transparent;
+  padding: 4px 8px;
+}
+.connectRow{
+  display:grid;
+  grid-template-columns:180px minmax(0,1fr) auto;
+  gap:12px;
+  align-items:center;
+  padding:12px 14px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(24, 46, 56, 0.05);
+  margin-bottom: 6px;
+}
+.connectRow:nth-child(even) {
+  background: rgba(24, 46, 56, 0.1);
+}
+.connectUrl{
+  font-family:inherit;
+  color:var(--green);
+  font-weight:700;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.deviceRow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  border: none;
+  border-radius: 4px;
+  background: rgba(24, 46, 56, 0.05);
+  margin-bottom: 6px;
+  padding:12px 14px;
+  gap:14px;
+}
+.deviceRow:nth-child(even) {
+  background: rgba(24, 46, 56, 0.1);
+}
+
+/* Toast */
+.toast{
+  position:fixed;
+  right:18px;
+  bottom:18px;
+  z-index:99;
+  max-width:min(420px,calc(100vw - 36px));
+  padding:12px 16px;
+  border-bottom: 3px solid var(--yellow);
+  background: var(--panel-bg);
+  color:var(--text);
+  box-shadow: 0 5px 25px rgba(0, 0, 0, 0.5);
+  font-weight:700;
+  display:none;
+}
+.toast.show{
+  display:block;
+}
+
+/* Drag overlay */
+.dropOverlay{
+  position:fixed;
+  inset:0;
+  background:rgba(4, 7, 10, 0.95);
+  display:none;
+  place-items:center;
+  z-index:100;
+  border:3px dashed var(--green);
+  color:var(--green);
+  font-size:24px;
+  font-weight:800;
+}
+.dropOverlay.show{
+  display:grid;
+}
+
+/* Modal Popup */
+.modal{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,0.85);
+  backdrop-filter:blur(2px);
+  z-index:10;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+}
+.modal.show{
+  display:flex;
+}
+.modalPanel{
+  width:min(720px,100%);
+  max-height:min(680px,calc(100vh - 40px));
+  background:var(--panel-bg);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.7);
+  display:flex;
+  flex-direction:column;
+  border-radius:0;
+}
+.modalHead{
+  background:var(--blue);
+  color:#000000;
+  font-weight:800;
+  padding:10px 14px;
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.modalTitle{
+  font-weight:850;
+  text-transform:uppercase;
+}
+.modalHead .search{
+  background: rgba(0, 0, 0, 0.25);
+  color:#000000;
+  border: none;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.4);
+  height:28px;
+  padding:0 8px;
+  font-size:12px;
+}
+.modalHead .search:focus{
+  border-bottom-color:#000000;
+}
+.modalHead .iconBtn{
+  height:28px;
+  padding:0 10px;
+  background:#000000;
+  color:var(--blue);
+  border-color:transparent;
+  border-bottom: 2px solid var(--blue);
+}
+.modalHead .iconBtn:hover{
+  background:#ffffff;
+  color:#000000;
+  border-bottom-color:#ffffff;
+}
+
+/* Responsiveness overrides */
 @media (max-width:820px){
-  .top{gap:8px;padding:0 12px}.identity{font-size:12px}.brand{font-size:14px}.tab{padding:0 10px}
-  .processToolbar{grid-template-columns:1fr auto}.processToolbar .secondaryRefresh{display:none}
-  .shell{grid-template-columns:1fr}.detailPane{display:none}.detailPane.open{display:flex;position:fixed;inset:56px 0 0;background:var(--bg);z-index:2}.streamPane.detailOpen{display:none}
-  .detailHead{grid-template-columns:1fr}.procActions,.procResult{margin-left:0}.metaGrid{grid-template-columns:1fr}
+  .top{
+    height:auto;
+    flex-wrap:wrap;
+  }
+  .brand{
+    height:32px;
+    width:100%;
+    justify-content:center;
+  }
+  .tabs{
+    width:100%;
+    height:32px;
+  }
+  .tab{
+    flex:1;
+    justify-content:center;
+  }
+  .identity{
+    display:none;
+  }
+  .clock{
+    display:none;
+  }
+  .processToolbar{
+    flex-direction:column;
+    align-items:stretch;
+  }
+  .processToolbar .search{
+    width:100%;
+  }
+  .shell{
+    grid-template-columns:1fr;
+  }
+  .detailPane{
+    display:none;
+  }
+  .detailPane.open{
+    display:flex;
+    position:fixed;
+    inset:64px 0 0;
+    z-index:2;
+  }
+  .streamPane.detailOpen{
+    display:none;
+  }
+  .detailHead{
+    flex-direction:column;
+    align-items:stretch;
+  }
+  .procActions,.procResult{
+    margin-left:0;
+  }
+  .metaGrid{
+    grid-template-columns:1fr;
+  }
 }
 </style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,700;1,400;1,500;1,700;1,800&display=swap" rel="stylesheet">
 </head>
 <body>
 <div class="top">
-  <div class="brand">AEON Capture</div>
+  <div class="brand">⬡ AEON-FLOW</div>
   <nav class="tabs">
-    <button class="tab active" data-tab="stream">捕获流</button>
-    <button class="tab" data-tab="processes">进程面板</button>
-    <button class="tab" data-tab="devices">设备</button>
+    <button class="tab active" data-tab="stream">0:捕获流*</button>
+    <button class="tab" data-tab="processes">1:进程面板</button>
+    <button class="tab" data-tab="devices">2:设备</button>
   </nav>
   <div class="identity" id="identity"></div>
+  <div class="clock" id="topClock"></div>
 </div>
 
 <section class="tabContent active" id="tab-stream">
   <main class="shell">
     <section class="streamPane" id="streamPane">
+      <div class="pane-header">
+        <span>CAPTURE STREAM</span>
+        <span class="pane-subtitle" id="streamCount">TOTAL: 0</span>
+      </div>
       <div class="filter">
-        <input class="search" id="search" placeholder="搜索捕获内容">
+        <input class="search" id="search" placeholder="搜索捕获内容...">
         <div class="pills" id="pills">
           <button class="pill active" data-kind="all">全部</button>
           <button class="pill" data-kind="Conversation">对话</button>
@@ -141,7 +939,14 @@ button{cursor:pointer}
       <div class="stream" id="stream"></div>
     </section>
     <section class="detailPane" id="detailPane">
-      <div class="empty" id="empty">选择一条捕获</div>
+      <div class="pane-header">
+        <span>CAPTURE DETAILS</span>
+        <span class="pane-subtitle" id="detailStatus">INACTIVE</span>
+      </div>
+      <div class="empty" id="empty">
+        <div style="font-size: 14px; font-weight: 800; margin-bottom: 8px; color: var(--muted);">NO ENTRY SELECTED</div>
+        <div style="font-size: 11px; color: var(--muted);">SELECT A CAPTURE FROM THE LEFT STREAM PANE</div>
+      </div>
       <div id="detail" style="display:none;height:100%;min-height:0;flex-direction:column"></div>
     </section>
   </main>
@@ -149,25 +954,43 @@ button{cursor:pointer}
 
 <section class="tabContent" id="tab-processes">
   <div class="processPage">
-    <div class="processToolbar">
-      <input class="search" id="procSearch" placeholder="搜索进程、PID、路径">
-      <button class="iconBtn secondaryRefresh" onclick="loadProcesses()">刷新</button>
-      <button class="iconBtn" onclick="captureProcesses()">捕获进程清单</button>
-      <button class="iconBtn primary" onclick="captureAll()">捕获全机状态</button>
+    <div class="processContainer">
+      <div class="pane-header">
+        <span>PROCESS MONITOR</span>
+        <span class="pane-subtitle" id="procCount">COUNT: 0</span>
+      </div>
+      <div class="processToolbar">
+        <input class="search" id="procSearch" placeholder="搜索进程、PID、路径...">
+        <button class="iconBtn secondaryRefresh" onclick="loadProcesses()">刷新</button>
+        <button class="iconBtn" onclick="captureProcesses()">捕获进程清单</button>
+        <button class="iconBtn primary" onclick="captureAll()">捕获全机状态</button>
+      </div>
+      <div class="processList" id="processList"></div>
     </div>
-    <div class="processList" id="processList"></div>
   </div>
 </section>
 
 <section class="tabContent" id="tab-devices">
   <div class="devicesPage">
-    <h2>设备</h2>
-    <div class="connectHint">Android 端会通过 AEON LAN Discovery 自动找到桌面；跨网络时使用自研 AEON Relay。</div>
-    <div class="connectBlock">
-      <div class="procGroupTitle">连接地址</div>
-      <div id="connectList"></div>
+    <div class="connectHint">
+      Android 端会通过 <span style="color: var(--green); font-weight: 700;">AEON LAN Discovery</span> 自动找到桌面；跨网络时使用自研 <span style="color: var(--cyan); font-weight: 700;">AEON Relay</span>。
     </div>
-    <div id="deviceList" class="processList"></div>
+    <div class="devicePanel">
+      <div class="pane-header">
+        <span>AEON RELAY / CONNECTION URLS</span>
+        <span class="pane-subtitle">CONFIGURED</span>
+      </div>
+      <div class="connectBlock-new">
+        <div id="connectList"></div>
+      </div>
+    </div>
+    <div class="devicePanel" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+      <div class="pane-header">
+        <span>DETECTED DEVICES</span>
+        <span class="pane-subtitle" id="deviceCount">ONLINE: 0</span>
+      </div>
+      <div id="deviceList" class="processList" style="flex: 1; overflow: auto;"></div>
+    </div>
   </div>
 </section>
 
@@ -187,9 +1010,28 @@ button{cursor:pointer}
 let entries=[],activeKind='all',currentCid=null,activeDetail=null,allProcesses=[],vms=[],devices=[],connectUrls=[];
 let toastTimer=null;
 const esc=s=>(s===null||s===undefined?'':String(s)).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-const fmtTime=ms=>{const d=Date.now()-ms;if(d<60000)return'刚刚';if(d<3600000)return`${Math.floor(d/60000)}分钟前`;if(d<86400000)return`${Math.floor(d/3600000)}小时前`;return new Date(ms).toLocaleString();};
+const fmtTime=ms=>{const d=Date.now()-ms;if(d<60000)return'刚刚';if(d<3600000)return`${Math.floor(d/60000)}m前`;if(d<86400000)return`${Math.floor(d/3600000)}h前`;return new Date(ms).toLocaleString();};
 const compact=s=>s&&s.length>140?s.slice(0,140)+'...':s||'';
 const humanMem=mb=>mb>=1024?(mb/1024).toFixed(1)+' GB':mb+' MB';
+
+// Deterministic HSL color generator for consistent signature colors based on semantic names
+const getColor = (str, s=80, l=65) => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const h = Math.abs(hash) % 360;
+  return `hsl(${h}, ${s}%, ${l}%)`;
+};
+
+function updateClock(){
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const topClock = document.getElementById('topClock');
+  if (topClock) {
+    topClock.textContent = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  }
+}
 
 async function refreshStatus(){
   const s=await fetch('/api/status').then(r=>r.json());
@@ -200,8 +1042,15 @@ async function refreshStatus(){
 }
 async function refreshEntries(){entries=await fetch('/api/entries').then(r=>r.json());renderStream();}
 function showToast(message){clearTimeout(toastTimer);toast.textContent=message;toast.classList.add('show');toastTimer=setTimeout(()=>toast.classList.remove('show'),3800);}
+
 function switchTab(name){
-  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name));
+  document.querySelectorAll('.tab').forEach(t=>{
+    const isActive = t.dataset.tab === name;
+    t.classList.toggle('active', isActive);
+    let txt = t.textContent.replace('*', '');
+    if (isActive) txt += '*';
+    t.textContent = txt;
+  });
   document.querySelectorAll('.tabContent').forEach(c=>c.classList.toggle('active',c.id===`tab-${name}`));
   if(name==='processes')loadProcesses();
   if(name==='devices')refreshStatus();
@@ -210,24 +1059,64 @@ document.querySelectorAll('.tab').forEach(tab=>tab.onclick=()=>switchTab(tab.dat
 
 function setActiveKind(kind){activeKind=kind;document.querySelectorAll('.pill').forEach(x=>x.classList.toggle('active',x.dataset.kind===kind));renderStream();}
 function filteredEntries(){const q=search.value.trim().toLowerCase();return entries.filter(e=>(activeKind==='all'||e.kind===activeKind)&&(!q||[e.title,e.summary,e.source_label,e.cid,...Object.values(e.extra||{})].some(v=>(v||'').toLowerCase().includes(q))));}
-function renderStream(){const list=filteredEntries();stream.innerHTML=list.map(e=>`
-  <div class="entry ${currentCid===e.cid?'active':''}" onclick="openEntry('${e.cid}')">
-    <div class="time">${fmtTime(e.captured_at)}</div>
-    <div class="entryBody">
-      <div class="entryTitle">${esc(e.title)}</div>
-      <div class="summary">${esc(compact(e.summary))}</div>
-      <div class="source"><span class="badge">${esc(e.kind_label)}</span><span>${esc(e.source_label)}</span></div>
-    </div>
-  </div>`).join('')||'<div class="empty" style="height:180px">暂无捕获</div>';}
-async function openEntry(cid){currentCid=cid;renderStream();const d=await fetch(`/api/entry/${cid}`).then(r=>r.json());activeDetail=d;empty.style.display='none';detail.style.display='flex';detailPane.classList.add('open');streamPane.classList.add('detailOpen');
+
+function renderStream(){
+  const list=filteredEntries();
+  const streamCount = document.getElementById('streamCount');
+  if(streamCount) streamCount.textContent = `TOTAL: ${list.length}`;
+  stream.innerHTML=list.map(e=>{
+    const badgeColor = getColor(e.kind, 90, 70);
+    const sourceColor = getColor(e.source_label, 75, 65);
+    return `
+    <div class="entry ${currentCid===e.cid?'active':''}" onclick="openEntry('${e.cid}')">
+      <div class="time">${fmtTime(e.captured_at)}</div>
+      <div class="entryBody">
+        <div class="entryTitle">${esc(e.title)}</div>
+        <div class="summary">${esc(compact(e.summary))}</div>
+        <div class="source">
+          <span class="badge" style="color: ${badgeColor}; border-color: ${badgeColor};">${esc(e.kind_label)}</span>
+          <span style="color: ${sourceColor}">${esc(e.source_label)}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('')||'<div class="empty" style="height:180px">暂无捕获</div>';
+}
+
+async function openEntry(cid){
+  currentCid=cid;
+  renderStream();
+  const d=await fetch(`/api/entry/${cid}`).then(r=>r.json());
+  activeDetail=d;
+  empty.style.display='none';
+  detail.style.display='flex';
+  detailPane.classList.add('open');
+  streamPane.classList.add('detailOpen');
+  const detailStatus = document.getElementById('detailStatus');
+  if(detailStatus) detailStatus.textContent = `ACTIVE: ${cid.slice(0,8)}`;
   const canContinue=['Conversation','Code','Text','Clipboard','Webpage'].includes(d.kind);
   const canEdit=d.editable&&d.text!==null;
   detail.innerHTML=`
     <div class="detailHead">
-      <div><div class="detailTitle">${esc(d.title)}</div><div class="detailMeta">${esc(d.kind_label)} · ${esc(d.source_label)} · ${fmtTime(d.captured_at)}</div></div>
-      <div class="actions"><button class="iconBtn" onclick="closeDetail()">返回</button><button class="iconBtn primary" ${canContinue?'':'disabled'} onclick="continueEntry('${d.cid}')">继续</button><button class="iconBtn" ${canEdit?'':'disabled'} onclick="startEdit()">编辑</button><button class="iconBtn" onclick="downloadEntry('${d.cid}')">打开原始内容</button></div>
+      <div>
+        <div class="detailTitle">${esc(d.title)}</div>
+        <div class="detailMeta" style="margin-top: 6px; display: flex; align-items: center; gap: 8px;">
+          <span class="badge" style="color: ${getColor(d.kind, 90, 70)}; border-color: ${getColor(d.kind, 90, 70)};">${esc(d.kind_label)}</span>
+          <span style="color: var(--muted)">·</span>
+          <span style="color: ${getColor(d.source_label, 75, 65)}">${esc(d.source_label)}</span>
+          <span style="color: var(--muted)">·</span>
+          <span>${fmtTime(d.captured_at)}</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="iconBtn" onclick="closeDetail()">返回</button>
+        <button class="iconBtn primary" ${canContinue?'':'disabled'} onclick="continueEntry('${d.cid}')">继续</button>
+        <button class="iconBtn" ${canEdit?'':'disabled'} onclick="startEdit()">编辑</button>
+        <button class="iconBtn" onclick="downloadEntry('${d.cid}')">打开原始内容</button>
+      </div>
     </div>
-    <div class="detailBody">${renderPreview(d)}${renderMeta(d)}</div>`;}
+    <div class="detailBody">${renderPreview(d)}${renderMeta(d)}</div>`;
+}
+
 function renderPreview(d){if(d.kind==='Image')return`<img class="previewImage" src="${d.raw_url}" alt="">`;if(d.kind==='VmSnapshot')return`<pre class="previewText">${esc(d.summary||d.title)}
 
 ${esc(Object.entries(d.extra||{}).map(([k,v])=>`${k}: ${v}`).join('\n'))}</pre>`;if(d.text)return`<pre class="previewText">${esc(d.text)}</pre>`;return`<pre class="previewText">${esc(d.summary||d.title)}</pre>`;}
@@ -237,11 +1126,18 @@ function renderMeta(d){const extra=Object.entries(d.extra||{}).map(([k,v])=>`<di
   <div>大小</div><div>${d.size} B</div>
   <div>应用</div><div>${esc(d.app_name||'-')}</div>
   <div>路径</div><div>${esc(d.file_path||'-')}</div>
-  <div>URL</div><div>${d.url?`<a href="${esc(d.url)}" target="_blank">${esc(d.url)}</a>`:'-'}</div>
-  <div>上一版本</div><div>${d.previous_version?`<button class="iconBtn" onclick="openEntry('${d.previous_version}')">打开上一版本</button>`:'-'}</div>
+  <div>URL</div><div>${d.url?`<a href="${esc(d.url)}" target="_blank" style="color: var(--cyan); text-decoration: none;">${esc(d.url)}</a>`:'-'}</div>
+  <div>上一版本</div><div>${d.previous_version?`<button class="iconBtn" onclick="openEntry('${d.previous_version}')" style="padding: 3px 8px; font-size: 11px;">打开上一版本</button>`:'-'}</div>
   ${extra}
 </div>`;}
-function closeDetail(){detailPane.classList.remove('open');streamPane.classList.remove('detailOpen');}
+
+function closeDetail(){
+  detailPane.classList.remove('open');
+  streamPane.classList.remove('detailOpen');
+  const detailStatus = document.getElementById('detailStatus');
+  if(detailStatus) detailStatus.textContent = `INACTIVE`;
+}
+
 async function continueEntry(cid){const d=await fetch(`/api/entry/${cid}`).then(r=>r.json());if(d.kind==='Webpage'&&d.url){window.open(d.url,'_blank');return;}if(d.kind==='Image'){window.open(d.raw_url,'_blank');return;}openEntry(cid);}
 function downloadEntry(cid){window.open(`/api/entry/${cid}/raw`,'_blank');}
 function startEdit(){
@@ -261,7 +1157,7 @@ async function saveEdit(){
 }
 
 async function loadProcesses(){
-  processList.innerHTML='<div class="empty" style="height:180px">正在读取进程</div>';
+  processList.innerHTML='<div class="empty" style="height:180px"><div style="font-size: 14px; font-weight: 800; color: var(--muted); margin-bottom: 8px;">READING PROCESSES...</div><div style="font-size: 11px; color: var(--muted);">WAIT A MOMENT</div></div>';
   try{
     allProcesses=await fetch('/api/processes').then(r=>r.json());
     renderProcesses(allProcesses);
@@ -278,29 +1174,36 @@ function renderProcesses(procs){
   const aeonVMs=procs.filter(p=>p.kind&&p.kind.AeonVM);
   const knownApps=procs.filter(p=>p.kind&&p.kind.KnownApp);
   const others=procs.filter(p=>p.kind==='Unknown');
+  const procCount = document.getElementById('procCount');
+  if(procCount) procCount.textContent = `COUNT: ${procs.length}`;
   let html='';
   if(aeonVMs.length)html+=aeonVMs.length>12
-    ? renderCollapsedGroup(`⬡ AEON 进程 (${aeonVMs.length})`,aeonVMs,'var(--violet)')
-    : renderGroup('⬡ AEON 进程',aeonVMs,'var(--violet)');
-  if(knownApps.length)html+=renderGroup('已知应用',knownApps,'var(--green)');
-  if(others.length)html+=`<details class="procGroup"><summary class="procGroupTitle" style="color:var(--muted)">其他进程 (${others.length}) 展开</summary>${others.slice(0,260).map(renderProcessItem).join('')}</details>`;
+    ? renderCollapsedGroup(`⬡ AEON 进程 (${aeonVMs.length})`,aeonVMs,'var(--purple)')
+    : renderGroup('⬡ AEON 进程',aeonVMs,'var(--purple)');
+  if(knownApps.length)html+=renderGroup('已知应用',knownApps,'var(--cyan)');
+  if(others.length)html+=`<details class="procGroup"><summary class="procGroupTitle" style="color:var(--muted)">其他进程 (${others.length})</summary>${others.slice(0,260).map(renderProcessItem).join('')}</details>`;
   processList.innerHTML=html||'<div class="empty" style="height:180px">没有找到进程</div>';
 }
 function renderGroup(title,procs,color){return`<div class="procGroup"><div class="procGroupTitle" style="color:${color}">${title}</div>${procs.map(renderProcessItem).join('')}</div>`;}
-function renderCollapsedGroup(title,procs,color){return`<details class="procGroup"><summary class="procGroupTitle" style="color:${color}">${title} 展开</summary>${procs.map(renderProcessItem).join('')}</details>`;}
+function renderCollapsedGroup(title,procs,color){return`<details class="procGroup"><summary class="procGroupTitle" style="color:${color}">${title}</summary>${procs.map(renderProcessItem).join('')}</details>`;}
+
 function renderProcessItem(p){
   const cpu=Math.min(Math.max(p.cpu_percent||0,0),100);
+  const cpuClass = cpu > 70 ? 'high' : (cpu > 30 ? 'medium' : 'low');
+  const nameColor = getColor(p.name, 90, 75);
+  const exeColor = getColor(p.exe || 'unknown', 70, 55);
+  const iconColor = getColor(p.name, 90, 65);
   return`<div class="procItem" id="proc-${p.pid}-${esc(getVmId(p)||'')}">
     <div class="procMain">
-      <span class="procIcon">${getProcessIcon(p)}</span>
+      <span class="procIcon" style="color: ${iconColor}">${getProcessIcon(p)}</span>
       <div class="procInfo">
-        <div class="procName">${esc(p.name)}</div>
-        <div class="procExe">${esc(p.exe||'')}</div>
+        <div class="procName" style="color: ${nameColor}">${esc(p.name)}</div>
+        <div class="procExe" style="color: ${exeColor}">${esc(p.exe||'')}</div>
         <div class="procStats">
-          <span><span class="cpuTrack"><span class="cpuBar" style="width:${cpu}%"></span></span>CPU ${(p.cpu_percent||0).toFixed(1)}%</span>
-          <span>内存 ${humanMem(p.memory_mb||0)}</span>
-          <span>${p.pid?`PID ${p.pid}`:esc(getVmId(p)||'VM')}</span>
-          <span>${esc(p.status)}</span>
+          <span><span class="cpuTrack"><span class="cpuBar ${cpuClass}" style="width:${cpu}%"></span></span>CPU <span style="color: ${cpu > 70 ? 'var(--red)' : (cpu > 30 ? 'var(--orange)' : 'var(--green)')}; font-weight:700;">${(p.cpu_percent||0).toFixed(1)}%</span></span>
+          <span>内存 <span style="color: var(--green); font-weight:700;">${humanMem(p.memory_mb||0)}</span></span>
+          <span>PID <span style="color: var(--yellow); font-weight:700;">${p.pid?p.pid:esc(getVmId(p)||'VM')}</span></span>
+          <span>状态 <span style="color: var(--blue); font-weight:700;">${esc(p.status)}</span></span>
         </div>
       </div>
     </div>
@@ -308,6 +1211,7 @@ function renderProcessItem(p){
     <div class="procResult" id="result-${p.pid}-${esc(getVmId(p)||'proc')}" style="display:none"></div>
   </div>`;
 }
+
 function captureClass(kind){return{DeepCapture:'btnDeep',Screenshot:'btnScreenshot',Migrate:'btnMigrate',Pause:'btnPause',Snapshot:'btnSnapshot',Metadata:'btnMeta'}[kind]||'';}
 function getVmId(p){return p.kind&&p.kind.AeonVM&&p.kind.AeonVM.vm_id;}
 function getProcessIcon(p){
@@ -364,11 +1268,33 @@ async function selectTargetDevice(){
 function renderDevices(){
   if(!deviceList)return;
   renderConnectUrls();
-  deviceList.innerHTML=(devices||[]).map(d=>`<div class="deviceRow"><div><strong>${esc(d.name)}</strong><div class="procExe">${esc(d.kind||'device')} · ${esc(d.id||'')}${d.last_seen_ms&&!d.is_local?` · ${Math.round(d.last_seen_ms/1000)}s ago`:''}</div></div><span class="badge">${d.online?'在线':'离线'}</span></div>`).join('')||'<div class="empty">没有设备</div>';
+  const onlineCount = (devices||[]).filter(d=>d.online).length;
+  const deviceCount = document.getElementById('deviceCount');
+  if(deviceCount) deviceCount.textContent = `ONLINE: ${onlineCount} / TOTAL: ${(devices||[]).length}`;
+  deviceList.innerHTML=(devices||[]).map(d=>{
+    const nameColor = getColor(d.name, 90, 75);
+    const idColor = getColor(d.id || 'dev', 80, 65);
+    return `
+    <div class="deviceRow">
+      <div>
+        <strong style="color: ${nameColor};">${esc(d.name)}</strong>
+        <div class="procExe" style="margin-top: 4px; color: var(--muted);">${esc(d.kind||'device')} · <span style="color: ${idColor};">${esc(d.id||'')}</span>${d.last_seen_ms&&!d.is_local?` · <span>${Math.round(d.last_seen_ms/1000)}s ago</span>`:''}</div>
+      </div>
+      <span class="badge ${d.online ? 'badge-ProcessState' : 'badge-Offline'}" style="color: ${d.online ? 'var(--green)' : 'var(--muted)'}">${d.online?'在线':'离线'}</span>
+    </div>`;
+  }).join('')||'<div class="empty">没有设备</div>';
 }
 function renderConnectUrls(){
   if(!connectList)return;
-  connectList.innerHTML=(connectUrls||[]).map(c=>`<div class="connectRow"><span class="badge">${esc(c.label)}${c.remote?' · Relay':''}</span><span class="connectUrl">${esc(c.url)}</span><button class="captureBtn btnMeta" data-copy-url="${esc(c.url)}">复制</button></div>`).join('')||'<div class="empty">没有连接地址</div>';
+  connectList.innerHTML=(connectUrls||[]).map(c=>{
+    const labelColor = getColor(c.label, 90, 70);
+    return `
+    <div class="connectRow">
+      <span class="badge" style="width: fit-content; color: ${labelColor}; border-color: ${labelColor};">${esc(c.label)}${c.remote?' · Relay':''}</span>
+      <span class="connectUrl">${esc(c.url)}</span>
+      <button class="captureBtn btnMeta" data-copy-url="${esc(c.url)}" style="padding: 4px 10px; font-size: 11px;">复制</button>
+    </div>`;
+  }).join('')||'<div class="empty">没有连接地址</div>';
 }
 document.addEventListener('click',e=>{
   const btn=e.target.closest('[data-copy-url]');
@@ -378,7 +1304,7 @@ document.addEventListener('click',e=>{
 });
 async function openVmPicker(){
   vmModal.classList.add('show');
-  vmList.innerHTML='<div class="empty" style="height:160px">正在读取 AEON VM</div>';
+  vmList.innerHTML='<div class="empty" style="height:160px"><div style="font-size: 14px; font-weight: 800; color: var(--muted); margin-bottom: 8px;">READING AEON VMS...</div><div style="font-size: 11px; color: var(--muted);">WAIT A MOMENT</div></div>';
   vms=await fetch('/api/vms').then(r=>r.json());
   renderVms();
   vmSearch.focus();
@@ -387,11 +1313,15 @@ function closeVmPicker(){vmModal.classList.remove('show');}
 function renderVms(){
   const q=vmSearch.value.trim().toLowerCase();
   const list=vms.filter(v=>!q||[v.id,v.status,v.program_path,v.program_id].some(x=>(x||'').toLowerCase().includes(q))).slice(0,240);
-  vmList.innerHTML=list.map(v=>`
+  vmList.innerHTML=list.map(v=>{
+    const idColor = getColor(v.id, 90, 75);
+    const pathColor = getColor(v.program_path || 'path', 70, 55);
+    return `
     <div class="procItem">
-      <div class="procMain"><span class="procIcon">⬡</span><div class="procInfo"><div class="procName">${esc(v.id)} · ${esc(v.status)}</div><div class="procExe">${esc(v.program_path)}${v.error?' · '+esc(v.error):''}</div></div></div>
+      <div class="procMain"><span class="procIcon" style="color: ${idColor}">⬡</span><div class="procInfo"><div class="procName" style="color: ${idColor}">${esc(v.id)} · <span style="color: var(--green);">${esc(v.status)}</span></div><div class="procExe" style="color: ${pathColor}">${esc(v.program_path)}${v.error?' · <span style="color: var(--red);">'+esc(v.error)+'</span>':''}</div></div></div>
       <div class="procActions"><button class="captureBtn btnSnapshot" ${v.error?'disabled':''} onclick="captureVm('${esc(v.id)}')">💾 捕获快照</button></div>
-    </div>`).join('')||'<div class="empty" style="height:160px">没有找到 AEON VM</div>';
+    </div>`;
+  }).join('')||'<div class="empty" style="height:160px">没有找到 AEON VM</div>';
 }
 async function captureVm(id){
   const result=await fetch(`/api/capture/vm/${encodeURIComponent(id)}`,{method:'POST'}).then(r=>r.ok?r.json():Promise.reject(r));
@@ -432,8 +1362,10 @@ search.oninput=renderStream;
 procSearch.oninput=filterProcesses;
 vmSearch.oninput=renderVms;
 function setupWS(){const ws=new WebSocket(`ws://${location.host}/ws`);ws.onmessage=e=>{try{const msg=JSON.parse(e.data);if(msg.type==='capture'&&msg.entry){entries=[msg.entry,...entries.filter(x=>x.cid!==msg.entry.cid)];renderStream();return;}}catch{}refreshEntries();};ws.onclose=()=>setTimeout(setupWS,1500);}
-refreshStatus();refreshEntries();setupWS();
+
+refreshStatus();refreshEntries();setupWS();updateClock();
 setInterval(()=>refreshStatus().catch(()=>{}),10000);
+setInterval(updateClock,1000);
 </script>
 </body>
 </html>
