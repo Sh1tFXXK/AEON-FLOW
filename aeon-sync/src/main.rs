@@ -84,12 +84,13 @@ async fn main() {
         Some(event_log.clone()),
     ));
 
+        let engine = capture_engine.clone();
+    tokio::spawn(async move {
+        aeon_capture::clipboard::start_clipboard_monitor(engine).await;
+    });
+
     #[cfg(target_os = "windows")]
     {
-        let engine = capture_engine.clone();
-        tokio::spawn(async move {
-            aeon_capture::clipboard::start_clipboard_monitor(engine).await;
-        });
         let engine = capture_engine.clone();
         tokio::spawn(async move {
             aeon_capture::os_activity::start_foreground_window_monitor(engine).await;
