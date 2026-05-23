@@ -20,24 +20,40 @@ pub async fn start_clipboard_monitor(engine: Arc<CaptureEngine>) {
     loop {
         ticker.tick().await;
 
-        let Some(text) = clipboard.get_text() else {
-            continue;
-        };
-        if text.trim().is_empty() {
-            continue;
+        if let Some(text) = clipboard.get_text() {
+            if !text.trim().is_empty() {
+                let data = text.as_bytes().to_vec();
+                let cid = *blake3::hash(&data).as_bytes();
+                if Some(cid) != last_cid {
+                    last_cid = Some(cid);
+
+                    let kind = detect_text_kind(&text);
+                    let entry = CaptureEntry::new(data, kind, CaptureSource::Clipboard);
+                    if let Err(err) = engine.capture(entry).await {
+                        tracing_like_warn(&format!("clipboard capture failed: {err}"));
+                    }
+                }
+            }
         }
 
-        let data = text.as_bytes().to_vec();
-        let cid = *blake3::hash(&data).as_bytes();
-        if Some(cid) == last_cid {
-            continue;
-        }
-        last_cid = Some(cid);
-
-        let kind = detect_text_kind(&text);
-        let entry = CaptureEntry::new(data, kind, CaptureSource::Clipboard);
-        if let Err(err) = engine.capture(entry).await {
-            tracing_like_warn(&format!("clipboard capture failed: {err}"));
+        if let Some(image) = clipboard.get_image() {
+            let cid = *blake3::hash(&image.png).as_bytes();
+            if Some(cid) != last_cid {
+                last_cid = Some(cid);
+                let entry = CaptureEntry::new(
+                    image.png,
+                    CaptureKind::Image {
+                        width: image.width,
+                        height: image.height,
+                        format: "png".to_string(),
+                    },
+                    CaptureSource::Clipboard,
+                )
+                .with_title("clipboard-image");
+                if let Err(err) = engine.capture(entry).await {
+                    tracing_like_warn(&format!("clipboard image capture failed: {err}"));
+                }
+            }
         }
     }
 }

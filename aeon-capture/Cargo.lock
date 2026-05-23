@@ -17,6 +17,7 @@ dependencies = [
  "bincode",
  "blake3",
  "dirs",
+ "image",
  "notify",
  "reqwest",
  "scraper",
