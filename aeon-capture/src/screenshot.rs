@@ -9,7 +9,7 @@ pub fn start_screenshot_monitor(engine: Arc<CaptureEngine>) -> notify::Result<Re
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
 
-    for dir in screenshot_dirs() {
+    for dir in crate::platform::paths::screenshot_dirs() {
         if dir.exists() {
             watcher.watch(&dir, RecursiveMode::Recursive)?;
         }
@@ -32,18 +32,6 @@ pub fn start_screenshot_monitor(engine: Arc<CaptureEngine>) -> notify::Result<Re
     Ok(watcher)
 }
 
-pub fn screenshot_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(picture_dir) = dirs::picture_dir() {
-        dirs.push(picture_dir.join("Screenshots"));
-        dirs.push(picture_dir.join("屏幕截图"));
-    }
-    if let Some(home) = dirs::home_dir() {
-        dirs.push(home.join("Documents").join("WeChat Files"));
-        dirs.push(home.join("Documents").join("Tencent Files"));
-    }
-    dirs
-}
 
 pub async fn capture_image(engine: Arc<CaptureEngine>, path: PathBuf) {
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
