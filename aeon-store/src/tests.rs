@@ -178,6 +178,43 @@ fn sync_announce_transfers_missing_blob() {
 }
 
 #[test]
+fn sync_listener_serves_multiple_announcements() {
+    let root_a = TempRoot::new("sync-multi-a");
+    let root_b = TempRoot::new("sync-multi-b");
+    let mut store_a = CIDStore::new(root_a.path()).unwrap();
+    let first = store_a.put(Blob::from_text("first")).unwrap();
+    let second = store_a.put(Blob::from_text("second")).unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let root_b_path = root_b.path();
+
+    let receiver = thread::spawn(move || {
+        let store_b = CIDStore::new(root_b_path).unwrap();
+        let mut engine_b = SyncEngine::new(store_b, [2u8; 16]);
+        engine_b.listen_n_on(listener, 2).unwrap()
+    });
+
+    let mut engine_a = SyncEngine::new(store_a, [1u8; 16]);
+    engine_a.announce_to(first, &addr.to_string()).unwrap();
+    engine_a.announce_to(second, &addr.to_string()).unwrap();
+    let received = receiver.join().unwrap();
+
+    assert_eq!(received.requested, 2);
+    assert_eq!(received.received, 2);
+
+    let mut reloaded_b = CIDStore::new(root_b.path()).unwrap();
+    assert_eq!(
+        reloaded_b.get(&first).unwrap().unwrap().as_text(),
+        Some("first")
+    );
+    assert_eq!(
+        reloaded_b.get(&second).unwrap().unwrap().as_text(),
+        Some("second")
+    );
+}
+
+#[test]
 fn account_id_is_public_key_hash() {
     let public_key = [7u8; 32];
     let account = Account::from_public_key("alice", public_key);

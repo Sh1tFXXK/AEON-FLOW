@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "AEON Browser Bridge",
+  "version": "0.1.0",
+  "description": "Reports active browser page context to the local AEON desktop bridge.",
+  "permissions": ["alarms", "storage", "tabs"],
+  "host_permissions": ["http://127.0.0.1:8080/*", "http://localhost:8080/*"],
+  "action": {
+    "default_title": "AEON",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

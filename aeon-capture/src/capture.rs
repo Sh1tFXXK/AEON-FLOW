@@ -32,6 +32,7 @@ pub enum CaptureKind {
         format: String,
     },
     ProcessState,
+    OsActivity,
     VmSnapshot,
     Clipboard,
     Blob {
@@ -51,6 +52,17 @@ pub struct CaptureMetadata {
     pub extra: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum OsCaptureProvider {
+    WinEventHook,
+    WindowsUiAutomation,
+    ShellNotification,
+    FilesystemWatcher,
+    ClipboardApi,
+    BrowserBridge,
+    AndroidSystemBridge,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CaptureSource {
     DragDrop,
@@ -58,6 +70,7 @@ pub enum CaptureSource {
     Screenshot,
     FileWatch { path: String },
     AppApi { app: String },
+    OperatingSystem { provider: OsCaptureProvider },
     ShareMenu,
     Manual,
     PeerSync { device_name: String },
@@ -149,6 +162,7 @@ impl CaptureKind {
             CaptureKind::Webpage => "Webpage",
             CaptureKind::Document { .. } => "Document",
             CaptureKind::ProcessState => "ProcessState",
+            CaptureKind::OsActivity => "OsActivity",
             CaptureKind::VmSnapshot => "VmSnapshot",
             CaptureKind::Clipboard => "Clipboard",
             CaptureKind::Blob { .. } => "Blob",
@@ -164,6 +178,7 @@ impl CaptureKind {
             CaptureKind::Webpage => "application/vnd.aeon.webpage+json".to_string(),
             CaptureKind::Document { format } => format!("application/{format}"),
             CaptureKind::ProcessState => "application/vnd.aeon.process-state".to_string(),
+            CaptureKind::OsActivity => "application/vnd.aeon.os-activity+json".to_string(),
             CaptureKind::VmSnapshot => "application/x-aeon-snapshot".to_string(),
             CaptureKind::Blob { mime } => mime.clone(),
         }
@@ -187,6 +202,26 @@ mod tests {
             .with_summary(&"你好".repeat(150));
 
         assert_eq!(entry.meta.summary.unwrap().chars().count(), 200);
+    }
+
+    #[test]
+    fn os_activity_has_typed_kind_and_source_provider() {
+        assert_eq!(CaptureKind::OsActivity.key(), "OsActivity");
+        assert_eq!(
+            CaptureKind::OsActivity.mime(),
+            "application/vnd.aeon.os-activity+json"
+        );
+
+        let source = CaptureSource::OperatingSystem {
+            provider: OsCaptureProvider::WinEventHook,
+        };
+
+        assert_eq!(
+            source,
+            CaptureSource::OperatingSystem {
+                provider: OsCaptureProvider::WinEventHook
+            }
+        );
     }
 
     #[test]

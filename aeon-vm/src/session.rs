@@ -7,7 +7,7 @@ use crate::editor::PatchSet;
 use crate::eventlog::AeonEvent;
 use crate::snapshot::Snapshot;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SessionId(pub String);
 
 impl SessionId {
@@ -91,6 +91,13 @@ pub struct SessionMessage {
     pub text: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MergeReport {
+    pub patches: usize,
+    pub messages: usize,
+    pub sessions: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedContext {
     pub id: String,
@@ -167,6 +174,49 @@ impl SharedContext {
 
     pub fn leave(&mut self, session: &SessionId) {
         self.connected_sessions.retain(|item| item != session);
+    }
+
+    pub fn merge_from(&mut self, remote: SharedContext) -> Result<MergeReport, String> {
+        if remote.base_snapshot.program_id() != self.base_snapshot.program_id() {
+            return Err("context ProgramId does not match current snapshot".to_string());
+        }
+
+        let mut report = MergeReport::default();
+
+        for patch in remote.patches {
+            let exists = self
+                .patches
+                .iter()
+                .any(|item| item.clock == patch.clock && item.author == patch.author);
+            if !exists {
+                self.patches.push(patch);
+                report.patches += 1;
+            }
+        }
+        self.patches
+            .sort_by_key(|patch| (patch.clock, patch.author.clone()));
+
+        for message in remote.messages {
+            let exists = self
+                .messages
+                .iter()
+                .any(|item| item.clock == message.clock && item.author == message.author);
+            if !exists {
+                self.messages.push(message);
+                report.messages += 1;
+            }
+        }
+        self.messages
+            .sort_by_key(|message| (message.clock, message.author.clone()));
+
+        for session in remote.connected_sessions {
+            if !self.connected_sessions.contains(&session) {
+                self.connected_sessions.push(session);
+                report.sessions += 1;
+            }
+        }
+
+        Ok(report)
     }
 
     pub fn print_timeline(&self) {

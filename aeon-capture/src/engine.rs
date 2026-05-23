@@ -1,4 +1,6 @@
 use crate::capture::{CaptureEntry, CaptureKind, CID};
+use crate::event::AeonEvent;
+use crate::event_log::EventLog;
 use crate::store::{CaptureRecord, CaptureStore};
 use aeon_store::Blob;
 use std::io;
@@ -7,6 +9,7 @@ use tokio::sync::{broadcast, Mutex};
 
 pub struct CaptureEngine {
     store: Arc<Mutex<CaptureStore>>,
+    event_log: Option<Arc<Mutex<EventLog>>>,
     tx: broadcast::Sender<CaptureEntry>,
     by: [u8; 32],
     device: [u8; 16],
@@ -14,7 +17,7 @@ pub struct CaptureEngine {
 
 impl CaptureEngine {
     pub fn new(store: Arc<Mutex<CaptureStore>>) -> Self {
-        Self::new_with_identity(store, [0u8; 32], [0u8; 16])
+        Self::new_with_identity_and_events(store, [0u8; 32], [0u8; 16], None)
     }
 
     pub fn new_with_identity(
@@ -22,9 +25,19 @@ impl CaptureEngine {
         by: [u8; 32],
         device: [u8; 16],
     ) -> Self {
+        Self::new_with_identity_and_events(store, by, device, None)
+    }
+
+    pub fn new_with_identity_and_events(
+        store: Arc<Mutex<CaptureStore>>,
+        by: [u8; 32],
+        device: [u8; 16],
+        event_log: Option<Arc<Mutex<EventLog>>>,
+    ) -> Self {
         let (tx, _) = broadcast::channel(256);
         CaptureEngine {
             store,
+            event_log,
             tx,
             by,
             device,
@@ -35,12 +48,16 @@ impl CaptureEngine {
         let cid = entry.cid;
         self.stamp_identity(&mut entry);
         self.enrich(&mut entry);
-        crate::apps::auto_wrap_capture_entry(&mut entry)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+        crate::apps::auto_wrap_capture_entry(&mut entry).map_err(io::Error::other)?;
 
         {
             let mut store = self.store.lock().await;
             store.put(entry.clone())?;
+        }
+
+        if let Some(event_log) = &self.event_log {
+            let event = AeonEvent::from_capture(&entry);
+            event_log.lock().await.append(&event)?;
         }
 
         let _ = self.tx.send(entry);
@@ -117,11 +134,9 @@ impl CaptureEngine {
                     }
                 }
             }
-            CaptureKind::Webpage => {
-                if entry.meta.summary.is_none() {
-                    if let Ok(text) = std::str::from_utf8(&entry.data) {
-                        entry.meta.summary = Some(text.chars().take(120).collect());
-                    }
+            CaptureKind::Webpage if entry.meta.summary.is_none() => {
+                if let Ok(text) = std::str::from_utf8(&entry.data) {
+                    entry.meta.summary = Some(text.chars().take(120).collect());
                 }
             }
             _ => {}
@@ -181,6 +196,87 @@ mod tests {
         assert_eq!(event.cid, cid);
         assert_eq!(event.meta.title.as_deref(), Some("第一行"));
         assert_eq!(engine.list().await.len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn capture_appends_event_after_store_success() {
+        let dir = temp_dir();
+        let store = CaptureStore::new(
+            CIDStore::new(dir.join("store")).unwrap(),
+            dir.join("index.json"),
+        )
+        .unwrap();
+        let event_log = Arc::new(Mutex::new(crate::event_log::EventLog::new(
+            dir.join("events.jsonl"),
+        )));
+        let engine = CaptureEngine::new_with_identity_and_events(
+            Arc::new(Mutex::new(store)),
+            [11u8; 32],
+            [12u8; 16],
+            Some(event_log.clone()),
+        );
+
+        let cid = engine
+            .capture(CaptureEntry::new(
+                b"eventful".to_vec(),
+                CaptureKind::Text,
+                CaptureSource::Manual,
+            ))
+            .await
+            .unwrap();
+
+        let events = event_log
+            .lock()
+            .await
+            .list(crate::event_log::EventQuery::default())
+            .unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].identity, [11u8; 32]);
+        assert_eq!(events[0].device, [12u8; 16]);
+        let crate::event::EventKind::CaptureAdded(capture) = &events[0].kind;
+        assert_eq!(capture.cid, cid);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn failed_capture_store_write_does_not_append_event() {
+        let dir = temp_dir();
+        let blocked_parent = dir.join("blocked-parent");
+        std::fs::write(&blocked_parent, b"not a directory").unwrap();
+        let store = CaptureStore::new(
+            CIDStore::new(dir.join("store")).unwrap(),
+            blocked_parent.join("index.json"),
+        )
+        .unwrap();
+        let event_log = Arc::new(Mutex::new(crate::event_log::EventLog::new(
+            dir.join("events.jsonl"),
+        )));
+        let engine = CaptureEngine::new_with_identity_and_events(
+            Arc::new(Mutex::new(store)),
+            [11u8; 32],
+            [12u8; 16],
+            Some(event_log.clone()),
+        );
+
+        let result = engine
+            .capture(CaptureEntry::new(
+                b"will not index".to_vec(),
+                CaptureKind::Text,
+                CaptureSource::Manual,
+            ))
+            .await;
+
+        assert!(result.is_err());
+        let events = event_log
+            .lock()
+            .await
+            .list(crate::event_log::EventQuery::default())
+            .unwrap();
+        assert!(events.is_empty());
+
         let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -327,12 +327,17 @@ pub fn default_state_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("/tmp/aeon-state"))
 }
 
+#[cfg(not(unix))]
+pub fn default_daemon_addr() -> String {
+    std::env::var("AEON_DAEMON_ADDR").unwrap_or_else(|_| "127.0.0.1:9998".to_string())
+}
+
 #[cfg(unix)]
 pub async fn serve(socket_path: &Path, state_dir: PathBuf) -> Result<(), String> {
+    use futures_util::StreamExt;
     use std::os::unix::net::UnixListener;
     use tokio::net::TcpListener;
     use tokio_tungstenite::accept_async;
-    use futures_util::StreamExt;
 
     if socket_path.exists() {
         std::fs::remove_file(socket_path).map_err(|err| err.to_string())?;
@@ -363,7 +368,9 @@ pub async fn serve(socket_path: &Path, state_dir: PathBuf) -> Result<(), String>
     });
 
     // WebSocket broadcaster
-    let ws_listener = TcpListener::bind("127.0.0.1:8080").await.map_err(|e| e.to_string())?;
+    let ws_listener = TcpListener::bind("127.0.0.1:8080")
+        .await
+        .map_err(|e| e.to_string())?;
     while let Ok((stream, _)) = ws_listener.accept().await {
         let tx = state.lock().await.event_tx.clone();
         let mut rx = tx.subscribe();
@@ -372,7 +379,9 @@ pub async fn serve(socket_path: &Path, state_dir: PathBuf) -> Result<(), String>
             if let Ok(ws_stream) = accept_async(stream).await {
                 let (mut write, _) = ws_stream.split();
                 while let Ok(msg) = rx.recv().await {
-                    let _ = write.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await;
+                    let _ = write
+                        .send(tokio_tungstenite::tungstenite::Message::Text(msg))
+                        .await;
                 }
             }
         });
@@ -395,13 +404,63 @@ pub fn send_request(socket_path: &Path, request: &DaemonRequest) -> Result<Strin
 }
 
 #[cfg(not(unix))]
-pub async fn serve(_socket_path: &Path, _state_dir: PathBuf) -> Result<(), String> {
-    Err("aeon-daemon currently requires Unix sockets".into())
+pub async fn serve(_socket_path: &Path, state_dir: PathBuf) -> Result<(), String> {
+    let listener = tokio::net::TcpListener::bind(default_daemon_addr())
+        .await
+        .map_err(|err| err.to_string())?;
+    serve_tcp_listener(listener, state_dir).await
 }
 
 #[cfg(not(unix))]
-pub fn send_request(_socket_path: &Path, _request: &DaemonRequest) -> Result<String, String> {
-    Err("aeon CLI currently requires Unix sockets".into())
+pub async fn serve_tcp_listener(
+    listener: tokio::net::TcpListener,
+    state_dir: PathBuf,
+) -> Result<(), String> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let state = std::sync::Arc::new(tokio::sync::Mutex::new(DaemonState::recover(state_dir)?));
+
+    loop {
+        let (stream, _) = listener.accept().await.map_err(|err| err.to_string())?;
+        let state = state.clone();
+        tokio::task::spawn(async move {
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            if reader.read_line(&mut line).await.is_err() {
+                return;
+            }
+
+            let response = {
+                let mut state = state.lock().await;
+                handle_json_request(&mut state, line.trim())
+                    .unwrap_or_else(|err| json!({"ok": false, "error": err}).to_string())
+            };
+
+            let stream = reader.get_mut();
+            let _ = stream.write_all(response.as_bytes()).await;
+            let _ = stream.write_all(b"\n").await;
+        });
+    }
+}
+
+#[cfg(not(unix))]
+pub fn send_request(_socket_path: &Path, request: &DaemonRequest) -> Result<String, String> {
+    send_request_to_addr(&default_daemon_addr(), request)
+}
+
+#[cfg(not(unix))]
+pub fn send_request_to_addr(addr: &str, request: &DaemonRequest) -> Result<String, String> {
+    use std::io::{BufRead, BufReader, Write};
+
+    let mut stream = std::net::TcpStream::connect(addr).map_err(|err| err.to_string())?;
+    let payload = serde_json::to_string(request).map_err(|err| err.to_string())?;
+    writeln!(stream, "{}", payload).map_err(|err| err.to_string())?;
+
+    let mut response = String::new();
+    BufReader::new(stream)
+        .read_line(&mut response)
+        .map_err(|err| err.to_string())?;
+    Ok(response)
 }
 
 fn required_arg(request: &DaemonRequest, index: usize) -> Result<&str, String> {
@@ -420,14 +479,37 @@ fn hex_id(id: &[u8; 32]) -> String {
 mod tests {
     #[cfg(not(unix))]
     #[tokio::test]
-    async fn non_unix_serve_matches_async_api() {
-        let err = super::serve(
-            &super::default_socket_path(),
-            super::default_state_dir(),
-        )
-        .await
-        .expect_err("non-Unix daemon socket support should be unavailable");
+    async fn non_unix_daemon_serves_json_requests_over_local_tcp() {
+        let state_dir = std::env::temp_dir().join(format!(
+            "aeon-daemon-tcp-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&state_dir).unwrap();
 
-        assert!(err.contains("requires Unix sockets"));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(super::serve_tcp_listener(listener, state_dir.clone()));
+
+        let response = tokio::task::spawn_blocking(move || {
+            super::send_request_to_addr(
+                &addr,
+                &super::DaemonRequest {
+                    cmd: "devices".into(),
+                    args: Vec::new(),
+                },
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert!(response.contains(r#""ok":true"#));
+        assert!(response.contains("local"));
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(state_dir);
     }
 }

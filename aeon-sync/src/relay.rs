@@ -300,16 +300,16 @@ async fn relay_capture_text(
             .next()
             .map(|s| s.chars().take(60).collect())
     });
-    let item = make_relay_item(
+    let item = make_relay_item(RelayItemInput {
         space,
         peer,
         data,
-        "Text".to_string(),
+        kind: "Text".to_string(),
         title,
-        payload.source.or_else(|| Some("Android".to_string())),
-        None,
-        "text/plain; charset=utf-8".to_string(),
-    );
+        source: payload.source.or_else(|| Some("Android".to_string())),
+        filename: None,
+        mime: "text/plain; charset=utf-8".to_string(),
+    });
 
     let item = state
         .store
@@ -351,16 +351,16 @@ async fn relay_capture_drop(
         let kind = aeon_capture::file::kind_from_path(Path::new(&filename), &data)
             .key()
             .to_string();
-        let item = make_relay_item(
-            space.clone(),
-            peer.clone(),
-            data.to_vec(),
+        let item = make_relay_item(RelayItemInput {
+            space: space.clone(),
+            peer: peer.clone(),
+            data: data.to_vec(),
             kind,
-            Some(filename.clone()),
-            Some("Android".to_string()),
-            Some(filename.clone()),
-            content_type,
-        );
+            title: Some(filename.clone()),
+            source: Some("Android".to_string()),
+            filename: Some(filename.clone()),
+            mime: content_type,
+        });
         let item = state
             .store
             .push(item)
@@ -491,16 +491,16 @@ fn relay_item_from_entry(config: &RelayPushConfig, entry: &CaptureEntry) -> Rela
         device_name: config.device_name.clone(),
         device_kind: config.device_kind.clone(),
     };
-    let mut item = make_relay_item(
-        sanitize_key(&config.space, "default"),
+    let mut item = make_relay_item(RelayItemInput {
+        space: sanitize_key(&config.space, "default"),
         peer,
-        entry.data.clone(),
-        entry.kind.key().to_string(),
-        entry.meta.title.clone(),
-        relay_source(entry),
-        relay_filename(entry),
-        entry.mime(),
-    );
+        data: entry.data.clone(),
+        kind: entry.kind.key().to_string(),
+        title: entry.meta.title.clone(),
+        source: relay_source(entry),
+        filename: relay_filename(entry),
+        mime: entry.mime(),
+    });
     item.captured_at = entry.captured_at;
     item.cid = hex_cid(&entry.cid);
     item.id = relay_id(item.captured_at, &item.cid, &item.from_device_id);
@@ -514,6 +514,7 @@ fn relay_source(entry: &CaptureEntry) -> Option<String> {
         CaptureSource::Screenshot => Some("Screenshot".to_string()),
         CaptureSource::FileWatch { path } => Some(format!("FileWatch: {path}")),
         CaptureSource::AppApi { app } => Some(app.clone()),
+        CaptureSource::OperatingSystem { provider } => Some(format!("OS: {provider:?}")),
         CaptureSource::ShareMenu => Some("ShareMenu".to_string()),
         CaptureSource::Manual => Some("AEON".to_string()),
         CaptureSource::PeerSync { .. } => None,
@@ -811,6 +812,7 @@ fn kind_from_relay_item(item: &RelayItem, data: &[u8]) -> CaptureKind {
     match item.kind.as_str() {
         "Conversation" => CaptureKind::Conversation,
         "ProcessState" => CaptureKind::ProcessState,
+        "OsActivity" => CaptureKind::OsActivity,
         "VmSnapshot" => CaptureKind::VmSnapshot,
         "Clipboard" => CaptureKind::Clipboard,
         "Webpage" => CaptureKind::Webpage,
@@ -859,7 +861,7 @@ fn kind_from_relay_item(item: &RelayItem, data: &[u8]) -> CaptureKind {
     }
 }
 
-fn make_relay_item(
+struct RelayItemInput {
     space: String,
     peer: PeerHeaders,
     data: Vec<u8>,
@@ -868,23 +870,25 @@ fn make_relay_item(
     source: Option<String>,
     filename: Option<String>,
     mime: String,
-) -> RelayItem {
+}
+
+fn make_relay_item(input: RelayItemInput) -> RelayItem {
     let captured_at = now_ms();
-    let cid = blake3::hash(&data).to_hex().to_string();
-    let id = relay_id(captured_at, &cid, &peer.device_id);
+    let cid = blake3::hash(&input.data).to_hex().to_string();
+    let id = relay_id(captured_at, &cid, &input.peer.device_id);
     RelayItem {
         id,
-        space,
-        from_device_id: peer.device_id,
-        from_device_name: peer.device_name,
-        from_kind: peer.device_kind,
-        kind,
-        title,
-        source,
-        filename,
-        mime,
+        space: input.space,
+        from_device_id: input.peer.device_id,
+        from_device_name: input.peer.device_name,
+        from_kind: input.peer.device_kind,
+        kind: input.kind,
+        title: input.title,
+        source: input.source,
+        filename: input.filename,
+        mime: input.mime,
         cid,
-        data_base64: BASE64.encode(data),
+        data_base64: BASE64.encode(input.data),
         captured_at,
     }
 }
@@ -977,20 +981,20 @@ mod tests {
     }
 
     fn test_item(space: &str, text: &str) -> RelayItem {
-        make_relay_item(
-            space.to_string(),
-            PeerHeaders {
+        make_relay_item(RelayItemInput {
+            space: space.to_string(),
+            peer: PeerHeaders {
                 device_id: "android-test".to_string(),
                 device_name: "Android Test".to_string(),
                 device_kind: "android".to_string(),
             },
-            text.as_bytes().to_vec(),
-            "Text".to_string(),
-            Some("test".to_string()),
-            Some("Android".to_string()),
-            None,
-            "text/plain".to_string(),
-        )
+            data: text.as_bytes().to_vec(),
+            kind: "Text".to_string(),
+            title: Some("test".to_string()),
+            source: Some("Android".to_string()),
+            filename: None,
+            mime: "text/plain".to_string(),
+        })
     }
 
     #[test]

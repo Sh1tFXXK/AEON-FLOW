@@ -1,7 +1,0 @@
-flow.aeon.capture.app-pngs-0 E:\project\AEON-FLOW\aeon-android\app\build\generated\res\pngs\debug
-flow.aeon.capture.app-resValues-1 E:\project\AEON-FLOW\aeon-android\app\build\generated\res\resValues\debug
-flow.aeon.capture.app-packageDebugResources-2 E:\project\AEON-FLOW\aeon-android\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
-flow.aeon.capture.app-packageDebugResources-3 E:\project\AEON-FLOW\aeon-android\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
-flow.aeon.capture.app-debug-4 E:\project\AEON-FLOW\aeon-android\app\build\intermediates\merged_res\debug\mergeDebugResources
-flow.aeon.capture.app-debug-5 E:\project\AEON-FLOW\aeon-android\app\src\debug\res
-flow.aeon.capture.app-main-6 E:\project\AEON-FLOW\aeon-android\app\src\main\res

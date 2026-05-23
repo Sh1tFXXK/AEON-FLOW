@@ -399,7 +399,7 @@ fn export_snapshot_record(record: VMRecord) -> Result<SnapshotExport, String> {
     })
 }
 
-fn read_manifest(state_dir: &PathBuf) -> Result<Manifest, String> {
+fn read_manifest(state_dir: &Path) -> Result<Manifest, String> {
     let manifest_path = state_dir.join("daemon_state.json");
     let bytes = std::fs::read(&manifest_path)
         .map_err(|err| format!("read {}: {}", manifest_path.display(), err))?;
@@ -835,7 +835,7 @@ mod tests {
         }
     }
 
-    fn write_manifest(dir: &PathBuf, snapshot_path: &PathBuf) {
+    fn write_manifest(dir: &Path, snapshot_path: &Path) {
         let manifest = serde_json::json!({
             "next_id": 2,
             "vms": {

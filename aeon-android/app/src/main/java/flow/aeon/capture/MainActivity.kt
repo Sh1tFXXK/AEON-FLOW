@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.content.pm.PackageManager
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -23,6 +24,7 @@ import android.widget.Toast
 class MainActivity : Activity() {
     private companion object {
         const val REQUEST_PICK_CAPTURE_FILE = 2001
+        const val REQUEST_SMS_PERMISSION = 2002
     }
 
     private val heartbeatHandler = Handler(Looper.getMainLooper())
@@ -74,6 +76,19 @@ class MainActivity : Activity() {
                 showStream()
             }
         }.start()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_SMS_PERMISSION &&
+            grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        ) {
+            startSmsBridge()
+        }
     }
 
     private fun buildUi() {
@@ -307,6 +322,9 @@ class MainActivity : Activity() {
             startService(Intent(this, PhotoWatcherService::class.java))
             toast("Photo watcher started")
         })
+        content.addView(actionButton("Start SMS bridge") {
+            requestSmsPermissionThenStart()
+        })
         val input = EditText(this).apply {
             hint = "Capture text to AEON"
             minLines = 4
@@ -398,6 +416,19 @@ class MainActivity : Activity() {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
         requestPermissions(arrayOf(permission), 1001)
+    }
+
+    private fun requestSmsPermissionThenStart() {
+        if (checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED) {
+            startSmsBridge()
+            return
+        }
+        requestPermissions(arrayOf(Manifest.permission.READ_SMS), REQUEST_SMS_PERMISSION)
+    }
+
+    private fun startSmsBridge() {
+        startService(Intent(this, SmsWatcherService::class.java))
+        toast("SMS bridge started")
     }
 
     private fun setLoading(message: String) {

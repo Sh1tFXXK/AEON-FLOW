@@ -1,4 +1,6 @@
-use aeon_store::{hex_cid, parse_cid_hex, Account, Blob, CIDStore, Context, Identity, SyncEngine, CID};
+use aeon_store::{
+    hex_cid, parse_cid_hex, Account, Blob, CIDStore, Context, Identity, SyncEngine, CID,
+};
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -105,7 +107,6 @@ fn parse_cli_cid(hex: &str) -> io::Result<[u8; 32]> {
     parse_cid_hex(hex).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
 }
 
-
 fn identity_path() -> std::path::PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -118,7 +119,10 @@ fn handle_identity(args: Vec<String>) -> io::Result<()> {
         [mode] if mode == "new" => {
             let path = identity_path();
             if path.exists() {
-                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "identity already exists"));
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "identity already exists",
+                ));
             }
             let identity = Identity::load_or_create(&path)?;
             println!("✓ 新身份已创建: {}", identity.id_short());
@@ -137,7 +141,10 @@ fn handle_identity(args: Vec<String>) -> io::Result<()> {
             let bytes = hex::decode(key)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
             if bytes.len() != 32 {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, "identity key must be 32 bytes hex"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "identity key must be 32 bytes hex",
+                ));
             }
             let path = identity_path();
             if let Some(parent) = path.parent() {
@@ -149,7 +156,10 @@ fn handle_identity(args: Vec<String>) -> io::Result<()> {
             println!("私钥保存到 {}", path.display());
         }
         _ => {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "identity new|show|export|import <private-key-hex>"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "identity new|show|export|import <private-key-hex>",
+            ));
         }
     }
     Ok(())
@@ -246,6 +256,23 @@ fn handle_sync(args: Vec<String>, store: CIDStore) -> io::Result<()> {
                 report.requested, report.received, report.sent
             );
         }
+        [mode, port, sessions_flag, sessions]
+            if mode == "--serve" && sessions_flag == "--sessions" =>
+        {
+            let addr = listen_addr(port);
+            let sessions = parse_session_count(sessions)?;
+            println!("serving {sessions} sync sessions on {addr}");
+            let report = engine.listen_n(&addr, sessions)?;
+            println!(
+                "sync complete: requested {}, received {}, sent {}",
+                report.requested, report.received, report.sent
+            );
+        }
+        [mode, port] if mode == "--serve" => {
+            let addr = listen_addr(port);
+            println!("serving sync sessions on {addr}");
+            engine.listen_forever(&addr)?;
+        }
         [mode, cid, peer_flag, peer] if mode == "--announce" && peer_flag == "--peer" => {
             let cid = parse_cli_cid(cid)?;
             let report = engine.announce_to(cid, peer)?;
@@ -260,7 +287,7 @@ fn handle_sync(args: Vec<String>, store: CIDStore) -> io::Result<()> {
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "sync --listen <port|addr> OR sync --announce <cid> --peer <addr>",
+                "sync --listen <port|addr> OR sync --serve <port|addr> [--sessions <n>] OR sync --announce <cid> --peer <addr>",
             ));
         }
     }
@@ -274,6 +301,19 @@ fn listen_addr(port_or_addr: &str) -> String {
     } else {
         format!("0.0.0.0:{port_or_addr}")
     }
+}
+
+fn parse_session_count(sessions: &str) -> io::Result<usize> {
+    let count = sessions
+        .parse::<usize>()
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    if count == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "session count must be greater than zero",
+        ));
+    }
+    Ok(count)
 }
 
 fn local_device_id() -> [u8; 16] {
@@ -321,5 +361,6 @@ fn usage() {
     eprintln!("  aeon-data context message <context-cid> <text> --by <account-id>");
     eprintln!("  aeon-data context history <context-cid>");
     eprintln!("  aeon-data sync --listen <port|addr>");
+    eprintln!("  aeon-data sync --serve <port|addr> [--sessions <n>]");
     eprintln!("  aeon-data sync --announce <cid> --peer <addr>");
 }

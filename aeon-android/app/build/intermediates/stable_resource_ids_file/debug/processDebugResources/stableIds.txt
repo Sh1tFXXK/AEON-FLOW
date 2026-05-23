@@ -1,1 +1,0 @@
-flow.aeon.capture:style/AppTheme = 0x7f010000
