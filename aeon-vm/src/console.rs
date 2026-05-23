@@ -176,45 +176,16 @@ impl FlowConsole {
         };
 
         let mut current = self.ctx_write();
-        if foreign.base_snapshot.program_id() != current.base_snapshot.program_id() {
-            println!("error: context ProgramId does not match current snapshot");
-            return;
+        match current.merge_from(foreign) {
+            Ok(report) => println!(
+                "joined {} ({} patch(es), {} message(s), {} session(s))",
+                path.display(),
+                report.patches,
+                report.messages,
+                report.sessions
+            ),
+            Err(err) => println!("error: {}", err),
         }
-
-        let mut added_patches = 0;
-        for patch in foreign.patches {
-            let exists = current
-                .patches
-                .iter()
-                .any(|item| item.clock == patch.clock && item.author == patch.author);
-            if !exists {
-                current.patches.push(patch);
-                added_patches += 1;
-            }
-        }
-
-        let mut added_messages = 0;
-        for message in foreign.messages {
-            let exists = current
-                .messages
-                .iter()
-                .any(|item| item.clock == message.clock && item.author == message.author);
-            if !exists {
-                current.messages.push(message);
-                added_messages += 1;
-            }
-        }
-
-        for session in foreign.connected_sessions {
-            current.join(session);
-        }
-
-        println!(
-            "joined {} ({} patch(es), {} message(s))",
-            path.display(),
-            added_patches,
-            added_messages
-        );
     }
 
     fn ctx_read(&self) -> std::sync::RwLockReadGuard<'_, SharedContext> {

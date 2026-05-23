@@ -18,6 +18,15 @@ pub enum Patch {
         old: usize,
         new: usize,
     },
+    HeapRange {
+        addr: usize,
+        old: Vec<u8>,
+        new: Vec<u8>,
+    },
+    HeapTop {
+        old: Option<usize>,
+        new: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -62,6 +71,25 @@ impl PatchSet {
                         .ok_or_else(|| format!("call stack index {} out of range", index))?;
                     *slot = new;
                 }
+                Patch::HeapRange { addr, ref new, .. } => {
+                    let heap = next
+                        .heap
+                        .as_mut()
+                        .ok_or_else(|| "heap is not available in this snapshot".to_string())?;
+                    write_heap_range(heap, addr, new)?;
+                }
+                Patch::HeapTop { new, .. } => {
+                    if let (Some(heap), Some(new)) = (next.heap.as_ref(), new) {
+                        if new > heap.len() {
+                            return Err(format!(
+                                "heap_top {} exceeds heap length {}",
+                                new,
+                                heap.len()
+                            ));
+                        }
+                    }
+                    next.heap_top = new;
+                }
             }
         }
 
@@ -73,17 +101,29 @@ impl PatchSet {
             .patches
             .iter()
             .rev()
-            .map(|patch| match *patch {
+            .map(|patch| match patch {
                 Patch::Reg { index, old, new } => Patch::Reg {
-                    index,
-                    old: new,
-                    new: old,
+                    index: *index,
+                    old: *new,
+                    new: *old,
                 },
-                Patch::Pc { old, new } => Patch::Pc { old: new, new: old },
+                Patch::Pc { old, new } => Patch::Pc {
+                    old: *new,
+                    new: *old,
+                },
                 Patch::CallStackEntry { index, old, new } => Patch::CallStackEntry {
-                    index,
-                    old: new,
-                    new: old,
+                    index: *index,
+                    old: *new,
+                    new: *old,
+                },
+                Patch::HeapRange { addr, old, new } => Patch::HeapRange {
+                    addr: *addr,
+                    old: new.clone(),
+                    new: old.clone(),
+                },
+                Patch::HeapTop { old, new } => Patch::HeapTop {
+                    old: *new,
+                    new: *old,
                 },
             })
             .collect();
@@ -157,24 +197,55 @@ impl SnapshotEditor {
         Ok(self)
     }
 
-    pub fn set_heap_byte(self, _addr: usize, _val: u8) -> Result<Self, String> {
-        Err("heap editing is deferred until Step 3".into())
+    pub fn set_heap_byte(self, addr: usize, val: u8) -> Result<Self, String> {
+        self.set_heap_range(addr, vec![val])
     }
 
-    pub fn set_heap_range(self, _addr: usize, _bytes: Vec<u8>) -> Result<Self, String> {
-        Err("heap editing is deferred until Step 3".into())
+    pub fn set_heap_range(mut self, addr: usize, bytes: Vec<u8>) -> Result<Self, String> {
+        let heap = self
+            .working
+            .heap
+            .as_mut()
+            .ok_or_else(|| "heap is not available in this snapshot".to_string())?;
+        let old = read_heap_range(heap, addr, bytes.len())?;
+        write_heap_range(heap, addr, &bytes)?;
+        self.patches.push(Patch::HeapRange {
+            addr,
+            old,
+            new: bytes,
+        });
+        Ok(self)
     }
 
-    pub fn set_heap_str(self, _addr: usize, _text: &str) -> Result<Self, String> {
-        Err("heap editing is deferred until Step 3".into())
+    pub fn set_heap_str(self, addr: usize, text: &str) -> Result<Self, String> {
+        self.set_heap_range(addr, text.as_bytes().to_vec())
     }
 
-    pub fn set_heap_u64(self, _addr: usize, _val: u64) -> Result<Self, String> {
-        Err("heap editing is deferred until Step 3".into())
+    pub fn set_heap_u64(self, addr: usize, val: u64) -> Result<Self, String> {
+        self.set_heap_range(addr, val.to_le_bytes().to_vec())
     }
 
-    pub fn set_heap_top(self, _val: usize) -> Result<Self, String> {
-        Err("heap editing is deferred until Step 3".into())
+    pub fn set_heap_top(mut self, val: usize) -> Result<Self, String> {
+        let heap = self
+            .working
+            .heap
+            .as_ref()
+            .ok_or_else(|| "heap is not available in this snapshot".to_string())?;
+        if val > heap.len() {
+            return Err(format!(
+                "heap_top {} exceeds heap length {}",
+                val,
+                heap.len()
+            ));
+        }
+
+        let old = self.working.heap_top;
+        self.working.heap_top = Some(val);
+        self.patches.push(Patch::HeapTop {
+            old,
+            new: Some(val),
+        });
+        Ok(self)
     }
 
     pub fn build(self) -> PatchSet {
@@ -250,6 +321,18 @@ impl<'a> Inspector<'a> {
                 before.call_stack, after.call_stack
             ));
         }
+        if before.heap_top != after.heap_top {
+            lines.push(format!(
+                "heap_top: {:?} -> {:?}",
+                before.heap_top, after.heap_top
+            ));
+        }
+        if before.heap != after.heap {
+            lines.push(format!(
+                "heap: {} changed bytes",
+                changed_heap_byte_count(before.heap.as_deref(), after.heap.as_deref())
+            ));
+        }
 
         let max = before.regs.len().max(after.regs.len());
         for index in 0..max {
@@ -261,5 +344,47 @@ impl<'a> Inspector<'a> {
         }
 
         lines
+    }
+}
+
+fn read_heap_range(heap: &[u8], addr: usize, len: usize) -> Result<Vec<u8>, String> {
+    let end = checked_heap_end(heap, addr, len)?;
+    Ok(heap[addr..end].to_vec())
+}
+
+fn write_heap_range(heap: &mut [u8], addr: usize, bytes: &[u8]) -> Result<(), String> {
+    let end = checked_heap_end(heap, addr, bytes.len())?;
+    heap[addr..end].copy_from_slice(bytes);
+    Ok(())
+}
+
+fn checked_heap_end(heap: &[u8], addr: usize, len: usize) -> Result<usize, String> {
+    let end = addr
+        .checked_add(len)
+        .ok_or_else(|| format!("heap range overflows: addr={} len={}", addr, len))?;
+    if end > heap.len() {
+        return Err(format!(
+            "heap range {}..{} exceeds {}",
+            addr,
+            end,
+            heap.len()
+        ));
+    }
+    Ok(end)
+}
+
+fn changed_heap_byte_count(before: Option<&[u8]>, after: Option<&[u8]>) -> usize {
+    match (before, after) {
+        (Some(before), Some(after)) => {
+            let shared = before
+                .iter()
+                .zip(after.iter())
+                .filter(|(left, right)| left != right)
+                .count();
+            shared + before.len().abs_diff(after.len())
+        }
+        (Some(before), None) => before.len(),
+        (None, Some(after)) => after.len(),
+        (None, None) => 0,
     }
 }

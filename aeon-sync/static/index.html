@@ -209,6 +209,44 @@ button{cursor:pointer}
   outline:none;
   border-bottom-color:var(--green);
 }
+.queryBox{
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:8px;
+  padding:0 12px 10px;
+}
+.queryResults{
+  padding:0 12px 8px;
+}
+.queryAnswer{
+  border-left:2px solid var(--green);
+  padding:8px 10px;
+  color:var(--text);
+  background:rgba(51, 214, 159, 0.08);
+  font-size:12px;
+  line-height:1.55;
+}
+.queryHits{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  margin-top:6px;
+}
+.queryHit{
+  border:none;
+  border-bottom:1px solid var(--border);
+  background:transparent;
+  color:var(--muted);
+  padding:6px 0;
+  text-align:left;
+  font-size:11px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.queryHit:hover{
+  color:var(--green);
+}
 
 .pills{
   display:flex;
@@ -936,6 +974,11 @@ button{cursor:pointer}
           <button class="pill" data-kind="Clipboard">剪贴板</button>
         </div>
       </div>
+      <div class="queryBox">
+        <input class="search" id="aiQuery" placeholder="Ask AEON: 今天我做了什么">
+        <button class="iconBtn" onclick="runQuery()">↵</button>
+      </div>
+      <div class="queryResults" id="queryResults"></div>
       <div class="stream" id="stream"></div>
     </section>
     <section class="detailPane" id="detailPane">
@@ -1059,6 +1102,21 @@ document.querySelectorAll('.tab').forEach(tab=>tab.onclick=()=>switchTab(tab.dat
 
 function setActiveKind(kind){activeKind=kind;document.querySelectorAll('.pill').forEach(x=>x.classList.toggle('active',x.dataset.kind===kind));renderStream();}
 function filteredEntries(){const q=search.value.trim().toLowerCase();return entries.filter(e=>(activeKind==='all'||e.kind===activeKind)&&(!q||[e.title,e.summary,e.source_label,e.cid,...Object.values(e.extra||{})].some(v=>(v||'').toLowerCase().includes(q))));}
+async function runQuery(){
+  const input=document.getElementById('aiQuery');
+  const panel=document.getElementById('queryResults');
+  const question=(input?.value||'').trim();
+  if(!question){showToast('请输入问题');return;}
+  panel.innerHTML='<div class="queryAnswer">Querying...</div>';
+  try{
+    const data=await fetch('/api/query',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({question,limit:8})}).then(r=>r.ok?r.json():Promise.reject(r));
+    const hits=(data.captures||[]).map(c=>`<button class="queryHit" onclick="openEntry('${esc(c.cid)}')">${fmtTime(c.captured_at)} · ${esc(c.kind)} · ${esc(c.title)}</button>`).join('');
+    panel.innerHTML=`<div class="queryAnswer">${esc(data.answer||'No answer')}</div>${hits?`<div class="queryHits">${hits}</div>`:''}`;
+  }catch(err){
+    panel.innerHTML='<div class="queryAnswer">Query failed.</div>';
+  }
+}
+document.getElementById('aiQuery')?.addEventListener('keydown',e=>{if(e.key==='Enter')runQuery();});
 
 function renderStream(){
   const list=filteredEntries();

@@ -4,6 +4,12 @@ use serde::{Deserialize, Serialize};
 pub const BRIDGE_KIND_KEY: &str = "bridge.kind";
 pub const SMS_BRIDGE_APP: &str = "bridge.sms";
 pub const EMAIL_BRIDGE_APP: &str = "bridge.email";
+pub const BROWSER_BRIDGE_APP: &str = "bridge.browser";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BridgePayloadError {
+    UnsupportedUrl,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SmsBridgePayload {
@@ -29,6 +35,21 @@ pub struct EmailBridgePayload {
     pub body_preview: String,
     pub received_at: u64,
     pub labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserPageBridgePayload {
+    pub url: String,
+    pub title: String,
+    pub captured_at: u64,
+    pub account_id: Option<String>,
+    pub tab_id: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct BrowserPageCaptureData<'a> {
+    url: &'a str,
+    title: &'a str,
 }
 
 pub fn extract_verification_code(text: &str) -> Option<String> {
@@ -127,6 +148,58 @@ impl EmailBridgePayload {
             .extra
             .insert("labels".to_string(), self.labels.join(","));
         entry
+    }
+}
+
+impl BrowserPageBridgePayload {
+    pub fn into_capture_entry(self) -> Result<CaptureEntry, BridgePayloadError> {
+        let url = normalize_web_url(&self.url)?;
+        let title = self.title.trim();
+        let title = if title.is_empty() { &url } else { title };
+        let data = serde_json::to_vec(&BrowserPageCaptureData { url: &url, title })
+            .unwrap_or_else(|_| url.as_bytes().to_vec());
+        let mut entry = CaptureEntry::new(
+            data,
+            CaptureKind::Webpage,
+            CaptureSource::AppApi {
+                app: BROWSER_BRIDGE_APP.to_string(),
+            },
+        )
+        .with_title(title)
+        .with_summary(&url)
+        .with_app("Browser");
+        entry.captured_at = self.captured_at;
+        entry.meta.url = Some(url);
+        entry
+            .meta
+            .extra
+            .insert(BRIDGE_KIND_KEY.to_string(), "browser_page".to_string());
+        if let Some(account_id) = self
+            .account_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        {
+            entry
+                .meta
+                .extra
+                .insert("account_id".to_string(), account_id);
+        }
+        if let Some(tab_id) = self.tab_id {
+            entry
+                .meta
+                .extra
+                .insert("tab_id".to_string(), tab_id.to_string());
+        }
+        Ok(entry)
+    }
+}
+
+fn normalize_web_url(url: &str) -> Result<String, BridgePayloadError> {
+    let trimmed = url.trim();
+    if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+        Ok(trimmed.to_string())
+    } else {
+        Err(BridgePayloadError::UnsupportedUrl)
     }
 }
 
@@ -243,5 +316,60 @@ mod tests {
             entry.meta.extra.get("from").map(String::as_str),
             Some("noreply@example.test")
         );
+    }
+
+    #[test]
+    fn browser_page_payload_converts_to_webpage_capture_without_fetching_content() {
+        let payload = BrowserPageBridgePayload {
+            url: "https://example.test/private".to_string(),
+            title: "Private dashboard".to_string(),
+            captured_at: 1_771_000_000_222,
+            account_id: Some("google-work".to_string()),
+            tab_id: Some(42),
+        };
+
+        let entry = payload.into_capture_entry().unwrap();
+
+        assert_eq!(entry.kind, CaptureKind::Webpage);
+        assert_eq!(
+            entry.source,
+            CaptureSource::AppApi {
+                app: BROWSER_BRIDGE_APP.to_string()
+            }
+        );
+        assert_eq!(entry.meta.app_name.as_deref(), Some("Browser"));
+        assert_eq!(entry.meta.title.as_deref(), Some("Private dashboard"));
+        assert_eq!(
+            entry.meta.url.as_deref(),
+            Some("https://example.test/private")
+        );
+        assert_eq!(
+            entry.meta.extra.get(BRIDGE_KIND_KEY).map(String::as_str),
+            Some("browser_page")
+        );
+        assert_eq!(
+            entry.meta.extra.get("account_id").map(String::as_str),
+            Some("google-work")
+        );
+        assert_eq!(
+            entry.data,
+            br#"{"url":"https://example.test/private","title":"Private dashboard"}"#
+        );
+    }
+
+    #[test]
+    fn browser_page_payload_rejects_non_web_urls() {
+        let payload = BrowserPageBridgePayload {
+            url: "file:///C:/Users/Wc/secret.txt".to_string(),
+            title: "secret".to_string(),
+            captured_at: 1_771_000_000_222,
+            account_id: None,
+            tab_id: None,
+        };
+
+        assert!(matches!(
+            payload.into_capture_entry(),
+            Err(BridgePayloadError::UnsupportedUrl)
+        ));
     }
 }

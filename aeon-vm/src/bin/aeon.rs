@@ -1,6 +1,7 @@
 use aeon_store::{
     hex_cid, parse_cid_hex, Account, Blob, CIDStore, Context, Message, SyncEngine, Thread, CID,
 };
+use aeon_vm::account_registry::{default_account_registry_path, AccountRegistry};
 use aeon_vm::daemon::{default_socket_path, default_state_dir, send_request, serve, DaemonRequest};
 use aeon_vm::snapshot::Snapshot;
 use std::env;
@@ -81,19 +82,8 @@ async fn run() -> Result<(), String> {
                 .ok_or_else(|| "usage: aeon account <display-name> <public-key-hex>".to_string())?;
             account_create(display_name, public_key)
         }
-        Some("whoami") => {
-            println!(
-                "{}",
-                env::var("AEON_ACCOUNT_ID").unwrap_or_else(|_| "unconfigured".to_string())
-            );
-            Ok(())
-        }
-        Some("accounts") => {
-            println!(
-                "local account registry is not implemented; use AEON_ACCOUNT_ID or `aeon account`"
-            );
-            Ok(())
-        }
+        Some("whoami") => account_whoami(),
+        Some("accounts") => account_list(),
         Some("ctx") => context_cmd(&args[2..]),
         Some("chat") => chat_cmd(&args[2..]),
         Some("sync") => sync_cmd(&args[2..]),
@@ -166,9 +156,59 @@ fn data_ls(kind_filter: Option<&str>) -> Result<(), String> {
 
 fn account_create(display_name: &str, public_key: &str) -> Result<(), String> {
     let account = Account::from_public_key(display_name, parse_cli_cid(public_key)?);
+    let mut registry = open_account_registry()?;
+    registry
+        .upsert(account.clone())
+        .map_err(|err| err.to_string())?;
     println!("account: {}", hex_cid(&account.id));
     println!("display_name: {}", account.display_name);
+    println!(
+        "default: {}",
+        registry.default_account_id() == Some(account.id)
+    );
     Ok(())
+}
+
+fn account_list() -> Result<(), String> {
+    let registry = open_account_registry()?;
+    if registry.list().is_empty() {
+        println!("no accounts configured");
+        return Ok(());
+    }
+
+    let default_account = registry.default_account_id();
+    for account in registry.list() {
+        let marker = if Some(account.id) == default_account {
+            "*"
+        } else {
+            " "
+        };
+        println!(
+            "{} {} {}",
+            marker,
+            hex_cid(&account.id),
+            account.display_name
+        );
+    }
+    Ok(())
+}
+
+fn account_whoami() -> Result<(), String> {
+    if let Ok(account_id) = env::var("AEON_ACCOUNT_ID") {
+        println!("{account_id}");
+        return Ok(());
+    }
+
+    let registry = open_account_registry()?;
+    match registry.default_account() {
+        Some(account) => println!("{}", hex_cid(&account.id)),
+        None => println!("unconfigured"),
+    }
+    Ok(())
+}
+
+fn open_account_registry() -> Result<AccountRegistry, String> {
+    AccountRegistry::open(default_account_registry_path()).map_err(|err| err.to_string())
 }
 
 fn context_cmd(args: &[String]) -> Result<(), String> {
@@ -240,11 +280,7 @@ fn sync_cmd(args: &[String]) -> Result<(), String> {
     let mut engine = SyncEngine::new(store, local_device_id());
     match args {
         [mode, port] if mode == "--listen" => {
-            let addr = if port.contains(':') {
-                port.clone()
-            } else {
-                format!("0.0.0.0:{port}")
-            };
+            let addr = listen_addr(port);
             println!("listening on {addr}");
             let report = engine.listen_once(&addr).map_err(|err| err.to_string())?;
             println!(
@@ -252,6 +288,24 @@ fn sync_cmd(args: &[String]) -> Result<(), String> {
                 report.requested, report.received, report.sent
             );
             Ok(())
+        }
+        [mode, port, sessions_flag, sessions] if mode == "--serve" && sessions_flag == "--sessions" => {
+            let addr = listen_addr(port);
+            let sessions = parse_session_count(sessions)?;
+            println!("serving {sessions} sync sessions on {addr}");
+            let report = engine
+                .listen_n(&addr, sessions)
+                .map_err(|err| err.to_string())?;
+            println!(
+                "sync complete: requested {}, received {}, sent {}",
+                report.requested, report.received, report.sent
+            );
+            Ok(())
+        }
+        [mode, port] if mode == "--serve" => {
+            let addr = listen_addr(port);
+            println!("serving sync sessions on {addr}");
+            engine.listen_forever(&addr).map_err(|err| err.to_string())
         }
         [mode, cid, peer_flag, peer] if mode == "--announce" && peer_flag == "--peer" => {
             let cid = parse_cli_cid(cid)?;
@@ -268,10 +322,28 @@ fn sync_cmd(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         _ => Err(
-            "usage: aeon sync --listen <port|addr> | sync --announce <cid> --peer <addr>"
+            "usage: aeon sync --listen <port|addr> | sync --serve <port|addr> [--sessions <n>] | sync --announce <cid> --peer <addr>"
                 .to_string(),
         ),
     }
+}
+
+fn listen_addr(port_or_addr: &str) -> String {
+    if port_or_addr.contains(':') {
+        port_or_addr.to_string()
+    } else {
+        format!("0.0.0.0:{port_or_addr}")
+    }
+}
+
+fn parse_session_count(sessions: &str) -> Result<usize, String> {
+    let count = sessions
+        .parse::<usize>()
+        .map_err(|err| format!("invalid --sessions: {err}"))?;
+    if count == 0 {
+        return Err("--sessions must be greater than zero".to_string());
+    }
+    Ok(count)
 }
 
 fn open_store() -> Result<CIDStore, String> {

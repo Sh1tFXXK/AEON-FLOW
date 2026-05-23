@@ -7,6 +7,8 @@ use tokio::sync::{broadcast, Mutex};
 
 mod account_profiles;
 mod bridge;
+mod email_imap;
+mod email_sync;
 mod operation_context;
 mod process;
 mod query;
@@ -53,6 +55,18 @@ async fn main() {
         vault::CredentialVaultStore::new(aeon_dir.join("vault.json"))
             .expect("failed to open credential vault"),
     ));
+    let vault_sessions = Arc::new(Mutex::new(vault::CredentialUnlockSessions::default()));
+    let email_sync = Arc::new(Mutex::new(
+        email_sync::EmailSyncStore::new(aeon_dir.join("email-sync.json"))
+            .expect("failed to open email sync store"),
+    ));
+    let query_planner = match query::QueryPlannerConfig::from_env() {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("AEON query planner config ignored: {err:?}");
+            None
+        }
+    };
 
     let identity_path = aeon_dir.join("identity");
     let identity = Identity::load_or_create(&identity_path).expect("failed to load identity");
@@ -75,6 +89,14 @@ async fn main() {
         let engine = capture_engine.clone();
         tokio::spawn(async move {
             aeon_capture::clipboard::start_clipboard_monitor(engine).await;
+        });
+        let engine = capture_engine.clone();
+        tokio::spawn(async move {
+            aeon_capture::os_activity::start_foreground_window_monitor(engine).await;
+        });
+        let engine = capture_engine.clone();
+        tokio::spawn(async move {
+            aeon_capture::os_activity::start_text_commit_monitor(engine).await;
         });
     }
 
@@ -145,6 +167,10 @@ async fn main() {
         operation_context,
         account_profiles,
         credential_vault,
+        vault_sessions,
+        email_sync,
+        query_planner,
+        verification_codes: Arc::new(Mutex::new(bridge::VerificationCodeInbox::default())),
         devices: Arc::new(Mutex::new(server::DeviceRegistry::default())),
         connect_urls: connect_urls.clone(),
         relay_url,
@@ -167,7 +193,12 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("bind failed");
-    axum::serve(listener, app).await.expect("server failed");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .expect("server failed");
 }
 
 async fn spawn_embedded_relay(config: RelayServeConfig) {

@@ -10,6 +10,10 @@ fn fib_snap(steps: usize) -> Snapshot {
     Snapshot::capture(&state)
 }
 
+fn heap_bytes(snap: &Snapshot, addr: usize, len: usize) -> &[u8] {
+    &snap.heap.as_ref().expect("test snapshot has heap")[addr..addr + len]
+}
+
 #[test]
 fn empty_patchset_has_zero_len() {
     let patchset = PatchSet::empty("noop");
@@ -213,33 +217,117 @@ fn patchset_len_counts_patches() {
 }
 
 #[test]
-fn set_heap_byte_errors_before_heap_support() {
+fn set_heap_byte_applies_and_reverses_change() {
     let snap = fib_snap(5);
+    let patchset = SnapshotEditor::new(&snap, "heap byte")
+        .set_heap_byte(0, 7)
+        .unwrap()
+        .build();
+
+    let patched = patchset.apply(&snap).unwrap();
+    let restored = patchset.reverse().apply(&patched).unwrap();
+
+    assert_eq!(heap_bytes(&patched, 0, 1), &[7]);
+    assert_eq!(restored.heap, snap.heap);
+}
+
+#[test]
+fn set_heap_range_applies_and_reverses_change() {
+    let snap = fib_snap(5);
+    let patchset = SnapshotEditor::new(&snap, "heap range")
+        .set_heap_range(4, vec![1, 2, 3])
+        .unwrap()
+        .build();
+
+    let patched = patchset.apply(&snap).unwrap();
+    let restored = patchset.reverse().apply(&patched).unwrap();
+
+    assert_eq!(heap_bytes(&patched, 4, 3), &[1, 2, 3]);
+    assert_eq!(restored.heap, snap.heap);
+}
+
+#[test]
+fn set_heap_str_writes_utf8_bytes() {
+    let snap = fib_snap(5);
+    let patched = SnapshotEditor::new(&snap, "heap str")
+        .set_heap_str(8, "hello")
+        .unwrap()
+        .build()
+        .apply(&snap)
+        .unwrap();
+
+    assert_eq!(heap_bytes(&patched, 8, 5), b"hello");
+}
+
+#[test]
+fn set_heap_u64_writes_little_endian_bytes() {
+    let snap = fib_snap(5);
+    let patched = SnapshotEditor::new(&snap, "heap u64")
+        .set_heap_u64(16, 0x0102_0304_0506_0708)
+        .unwrap()
+        .build()
+        .apply(&snap)
+        .unwrap();
+
+    assert_eq!(heap_bytes(&patched, 16, 8), &[8, 7, 6, 5, 4, 3, 2, 1]);
+}
+
+#[test]
+fn set_heap_top_applies_and_reverses_change() {
+    let snap = fib_snap(5);
+    let patchset = SnapshotEditor::new(&snap, "heap top")
+        .set_heap_top(128)
+        .unwrap()
+        .build();
+
+    let patched = patchset.apply(&snap).unwrap();
+    let restored = patchset.reverse().apply(&patched).unwrap();
+
+    assert_eq!(patched.heap_top, Some(128));
+    assert_eq!(restored.heap_top, snap.heap_top);
+}
+
+#[test]
+fn heap_edits_reject_missing_heap() {
+    let mut snap = fib_snap(5);
+    snap.heap = None;
+
     assert!(SnapshotEditor::new(&snap, "heap")
         .set_heap_byte(0, 1)
         .is_err());
 }
 
 #[test]
-fn set_heap_range_errors_before_heap_support() {
+fn heap_edits_reject_out_of_range_ranges() {
     let snap = fib_snap(5);
+    let heap_len = snap.heap.as_ref().unwrap().len();
+
     assert!(SnapshotEditor::new(&snap, "heap")
-        .set_heap_range(0, vec![1, 2])
+        .set_heap_range(heap_len - 1, vec![1, 2])
         .is_err());
 }
 
 #[test]
-fn set_heap_str_errors_before_heap_support() {
+fn set_heap_top_rejects_values_beyond_heap_len() {
     let snap = fib_snap(5);
-    assert!(SnapshotEditor::new(&snap, "heap")
-        .set_heap_str(0, "hello")
+    let heap_len = snap.heap.as_ref().unwrap().len();
+
+    assert!(SnapshotEditor::new(&snap, "heap top")
+        .set_heap_top(heap_len + 1)
         .is_err());
 }
 
 #[test]
-fn set_heap_u64_errors_before_heap_support() {
+fn inspector_diff_reports_heap_changes() {
     let snap = fib_snap(5);
-    assert!(SnapshotEditor::new(&snap, "heap")
-        .set_heap_u64(0, 42)
-        .is_err());
+    let patched = SnapshotEditor::new(&snap, "heap byte")
+        .set_heap_byte(0, 7)
+        .unwrap()
+        .build()
+        .apply(&snap)
+        .unwrap();
+
+    assert!(Inspector::diff(&snap, &patched)
+        .iter()
+        .any(|line| line.contains("heap")));
 }

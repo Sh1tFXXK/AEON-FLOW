@@ -2,6 +2,7 @@ use crate::{Blob, CIDStore, Node, CID};
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::ops::AddAssign;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SyncMessage {
@@ -34,6 +35,14 @@ pub struct SyncReport {
     pub requested: usize,
     pub sent: usize,
     pub received: usize,
+}
+
+impl AddAssign for SyncReport {
+    fn add_assign(&mut self, rhs: Self) {
+        self.requested += rhs.requested;
+        self.sent += rhs.sent;
+        self.received += rhs.received;
+    }
 }
 
 pub struct SyncEngine {
@@ -92,14 +101,44 @@ impl SyncEngine {
 
     pub fn listen_once_on(&mut self, listener: TcpListener) -> io::Result<SyncReport> {
         let (mut stream, _) = listener.accept()?;
+        self.handle_stream(&mut stream)
+    }
+
+    pub fn listen_n(&mut self, addr: &str, sessions: usize) -> io::Result<SyncReport> {
+        let listener = TcpListener::bind(addr)?;
+        self.listen_n_on(listener, sessions)
+    }
+
+    pub fn listen_n_on(
+        &mut self,
+        listener: TcpListener,
+        sessions: usize,
+    ) -> io::Result<SyncReport> {
+        let mut total = SyncReport::default();
+        for _ in 0..sessions {
+            let (mut stream, _) = listener.accept()?;
+            total += self.handle_stream(&mut stream)?;
+        }
+        Ok(total)
+    }
+
+    pub fn listen_forever(&mut self, addr: &str) -> io::Result<()> {
+        let listener = TcpListener::bind(addr)?;
+        loop {
+            let (mut stream, _) = listener.accept()?;
+            self.handle_stream(&mut stream)?;
+        }
+    }
+
+    fn handle_stream(&mut self, stream: &mut TcpStream) -> io::Result<SyncReport> {
         let mut reader = BufReader::new(stream.try_clone()?);
         let Some(message) = read_message(&mut reader)? else {
             return Ok(SyncReport::default());
         };
 
         match message {
-            SyncMessage::Have { bloom, .. } => self.handle_have(&mut stream, &mut reader, &bloom),
-            SyncMessage::Want { cid } => self.handle_want(&mut stream, cid),
+            SyncMessage::Have { bloom, .. } => self.handle_have(stream, &mut reader, &bloom),
+            SyncMessage::Want { cid } => self.handle_want(stream, cid),
             SyncMessage::Data { blob, .. } => {
                 self.store.put(blob)?;
                 Ok(SyncReport {

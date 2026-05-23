@@ -1,2 +1,15 @@
 .worktrees/
+
+# Rust build output
 target/
+**/target/
+
+# Android/Gradle build output
+aeon-android/.gradle/
+aeon-android/build/
+aeon-android/app/build/
+
+# Local/generated artifacts
+output/
+tmp/
+*.log

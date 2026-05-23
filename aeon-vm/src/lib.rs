@@ -1,6 +1,8 @@
 //! AEON VM - A minimal VM with complete state migration
 
+pub mod account_registry;
 pub mod asm;
+pub mod collab_transport;
 pub mod console;
 pub mod cowheap;
 pub mod daemon;

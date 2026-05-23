@@ -1,19 +1,15 @@
-mod collab;
-mod discovery;
-mod engine;
-mod protocol;
-mod state;
-mod tunnel;
-mod watcher;
-
+use aeon_agent::{
+    collab, discovery,
+    engine::{device_id_from_name, SyncEngine},
+    state::SyncState,
+    tunnel::{self, TunnelConfig},
+    watcher,
+};
 use aeon_store::{Blob, CIDStore, DeviceInfo, Identity, Platform};
-use engine::{device_id_from_name, SyncEngine};
-use state::SyncState;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tokio::sync::mpsc;
-use tunnel::TunnelConfig;
 
 fn read_blob_with_retry(path: &std::path::Path) -> Option<Blob> {
     for delay_ms in [0u64, 120, 300] {

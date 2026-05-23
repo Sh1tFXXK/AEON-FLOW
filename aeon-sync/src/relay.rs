@@ -514,6 +514,7 @@ fn relay_source(entry: &CaptureEntry) -> Option<String> {
         CaptureSource::Screenshot => Some("Screenshot".to_string()),
         CaptureSource::FileWatch { path } => Some(format!("FileWatch: {path}")),
         CaptureSource::AppApi { app } => Some(app.clone()),
+        CaptureSource::OperatingSystem { provider } => Some(format!("OS: {provider:?}")),
         CaptureSource::ShareMenu => Some("ShareMenu".to_string()),
         CaptureSource::Manual => Some("AEON".to_string()),
         CaptureSource::PeerSync { .. } => None,
@@ -811,6 +812,7 @@ fn kind_from_relay_item(item: &RelayItem, data: &[u8]) -> CaptureKind {
     match item.kind.as_str() {
         "Conversation" => CaptureKind::Conversation,
         "ProcessState" => CaptureKind::ProcessState,
+        "OsActivity" => CaptureKind::OsActivity,
         "VmSnapshot" => CaptureKind::VmSnapshot,
         "Clipboard" => CaptureKind::Clipboard,
         "Webpage" => CaptureKind::Webpage,

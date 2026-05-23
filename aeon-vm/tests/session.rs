@@ -21,6 +21,13 @@ fn fib_snap(steps: usize) -> Snapshot {
     Snapshot::capture(&state)
 }
 
+fn factorial_snap(steps: usize) -> Snapshot {
+    let program = programs::factorial(5);
+    let mut state = VMState::new(&program);
+    state.run_bounded(&program, steps);
+    Snapshot::capture(&state)
+}
+
 fn reg_patch(snap: &Snapshot, reg: u8, val: u64, desc: &str) -> PatchSet {
     SnapshotEditor::new(snap, desc)
         .set_reg(reg, val)
@@ -240,6 +247,59 @@ fn shared_context_roundtrips_through_bytes() {
     assert_eq!(ctx2.message_count(), 1);
     assert_eq!(ctx2.connected_sessions.len(), 2);
     assert_eq!(ctx2.current_snapshot().unwrap().regs[0], 77);
+}
+
+#[test]
+fn shared_context_merge_imports_unique_remote_state() {
+    let snap = fib_snap(5);
+    let mut local = SharedContext::new("merge", snap.clone(), alice());
+    let local_patch = reg_patch(&snap, 0, 11, "local");
+    local
+        .apply_patch(alice(), "local edit", local_patch)
+        .unwrap();
+    local.post_message(alice(), "local note");
+
+    let mut remote = SharedContext::new("merge", snap.clone(), bob());
+    let remote_patch = reg_patch(&snap, 1, 22, "remote");
+    remote
+        .apply_patch(bob(), "remote edit", remote_patch)
+        .unwrap();
+    remote.post_message(bob(), "remote note");
+    remote.join(SessionId::from_str("carol@tablet/conv-3"));
+
+    let report = local.merge_from(remote.clone()).unwrap();
+    assert_eq!(report.patches, 1);
+    assert_eq!(report.messages, 1);
+    assert_eq!(report.sessions, 2);
+    assert_eq!(local.patch_count(), 2);
+    assert_eq!(local.message_count(), 2);
+    assert!(local.connected_sessions.contains(&bob()));
+    assert!(local
+        .connected_sessions
+        .contains(&SessionId::from_str("carol@tablet/conv-3")));
+    let current = local.current_snapshot().unwrap();
+    assert_eq!(current.regs[0], 11);
+    assert_eq!(current.regs[1], 22);
+
+    let empty_report = local.merge_from(remote).unwrap();
+    assert_eq!(empty_report.patches, 0);
+    assert_eq!(empty_report.messages, 0);
+    assert_eq!(empty_report.sessions, 0);
+    assert_eq!(local.patch_count(), 2);
+    assert_eq!(local.message_count(), 2);
+}
+
+#[test]
+fn shared_context_merge_rejects_different_program() {
+    let mut local = SharedContext::new("merge", fib_snap(5), alice());
+    let remote = SharedContext::new("merge", factorial_snap(3), bob());
+
+    let err = local.merge_from(remote).unwrap_err();
+
+    assert!(err.contains("ProgramId"));
+    assert_eq!(local.patch_count(), 0);
+    assert_eq!(local.message_count(), 0);
+    assert_eq!(local.connected_sessions, vec![alice()]);
 }
 
 #[test]

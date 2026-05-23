@@ -35,7 +35,7 @@ The complete AEON vision is valid, but it is too large and too sensitive for a s
 
 1. Event timeline foundation
 2. realtime Event timeline UI and query API
-3. typed capture expansion for existing sources
+3. typed capture expansion for existing OS/application sources
 4. Android SMS verification-code bridge
 5. context bus for clipboard, current task, and AI sessions
 6. encrypted credential vault without browser injection
@@ -56,8 +56,8 @@ This stage adds only the Event timeline foundation:
 
 This stage does not add:
 
-- keyboard hooks
-- screen OCR
+- pixel OCR-derived screen text
+- raw keyboard hooks
 - HTTP proxy capture
 - audio capture
 - credential storage
@@ -235,7 +235,7 @@ The following are explicitly deferred:
 - AI natural-language queries
 - encrypted credential storage
 - automatic browser fill
-- global keyboard or screen capture
+- global keyboard capture or pixel OCR-derived screen text
 - all-device conflict resolution
 - public Relay authentication
 

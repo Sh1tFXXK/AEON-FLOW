@@ -11,10 +11,12 @@ Implemented:
 - A local append-only JSONL event log at `~/.aeon/events.jsonl`.
 - Capture engine wiring that appends one event only after the capture store write succeeds.
 - HTTP read APIs in `aeon-sync`.
+- `CaptureKind::OsActivity` for OS-level activity facts such as foreground window focus and UI Automation text commits.
+- `CaptureSource::OperatingSystem` with typed provider metadata.
 
 Not implemented in this phase:
 
-- Screen/OCR, keyboard, network, audio, or credential capture.
+- Pixel OCR-derived screen text, raw keyboard capture, network, audio, or credential capture.
 - Entity graph aggregation.
 - AI natural-language query.
 - Cross-device event-log merge or conflict resolution.
@@ -46,6 +48,7 @@ Core types live in `aeon-capture`:
 - `EventKind::CaptureAdded`: projection of an accepted capture.
 - `CaptureEvent`: capture-specific event payload containing CID, capture kind, title, summary, size, mime, and typed metadata.
 - `EventSource`: identifies whether the event came from local capture or relay import.
+- `OsActivity`: OS-level activity payloads stored as normal captures when accepted by `CaptureEngine`.
 
 The event projection intentionally excludes raw capture bytes. Consumers should dereference the CID through existing capture APIs when they need content.
 
@@ -126,5 +129,6 @@ cargo fmt -- --check
 - No raw bytes in event records.
 - No direct API mutation of `EventLog`.
 - No stringly-typed event kind branching in domain code.
+- No OCR capture path.
+- No raw keyboard/keylogging capture path.
 - No broad capture expansion until the event stream is stable.
-

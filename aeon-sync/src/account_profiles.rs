@@ -57,8 +57,18 @@ pub enum AccountDataType {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrowserLaunchPlan {
+    pub account_id: String,
+    pub label: String,
+    pub credential_ref: Option<String>,
     pub executable: PathBuf,
     pub args: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum BrowserPlanError {
+    AccountNotFound,
+    MissingBrowserProfile,
+    UnsupportedUrl,
 }
 
 #[derive(Debug)]
@@ -70,6 +80,7 @@ pub struct AccountProfileStore {
 #[derive(Debug, Deserialize)]
 pub struct BrowserPlanPayload {
     pub executable: Option<PathBuf>,
+    pub url: Option<String>,
 }
 
 impl Default for SharingPolicy {
@@ -86,8 +97,15 @@ impl Default for SharingPolicy {
 }
 
 impl ManagedAccount {
-    pub fn browser_launch_plan(&self, executable: PathBuf) -> Option<BrowserLaunchPlan> {
-        let profile = self.browser_profile.as_ref()?;
+    pub fn browser_launch_plan(
+        &self,
+        executable: PathBuf,
+        target_url: Option<String>,
+    ) -> Result<BrowserLaunchPlan, BrowserPlanError> {
+        let profile = self
+            .browser_profile
+            .as_ref()
+            .ok_or(BrowserPlanError::MissingBrowserProfile)?;
         let mut args = vec![
             format!("--user-data-dir={}", profile.profile_dir.display()),
             "--profile-directory=Default".to_string(),
@@ -97,7 +115,16 @@ impl ManagedAccount {
         if let Some(extension_dir) = &profile.extension_dir {
             args.push(format!("--load-extension={}", extension_dir.display()));
         }
-        Some(BrowserLaunchPlan { executable, args })
+        if let Some(target_url) = normalize_browser_target_url(target_url)? {
+            args.push(target_url);
+        }
+        Ok(BrowserLaunchPlan {
+            account_id: self.id.clone(),
+            label: self.label.clone(),
+            credential_ref: self.credential_ref.clone(),
+            executable,
+            args,
+        })
     }
 }
 
@@ -130,11 +157,14 @@ impl AccountProfileStore {
         &self,
         account_id: &str,
         executable: PathBuf,
-    ) -> Option<BrowserLaunchPlan> {
-        self.accounts
+        target_url: Option<String>,
+    ) -> Result<BrowserLaunchPlan, BrowserPlanError> {
+        let account = self
+            .accounts
             .iter()
             .find(|account| account.id == account_id)
-            .and_then(|account| account.browser_launch_plan(executable))
+            .ok_or(BrowserPlanError::AccountNotFound)?;
+        account.browser_launch_plan(executable, target_url)
     }
 }
 
@@ -163,9 +193,35 @@ pub async fn browser_launch_plan(
         .unwrap_or_else(|| PathBuf::from("chrome.exe"));
     let store = state.account_profiles.lock().await;
     let plan = store
-        .browser_launch_plan(&account_id, executable)
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .browser_launch_plan(&account_id, executable, payload.url)
+        .map_err(browser_plan_status)?;
     Ok(Json(plan))
+}
+
+fn browser_plan_status(err: BrowserPlanError) -> StatusCode {
+    match err {
+        BrowserPlanError::AccountNotFound | BrowserPlanError::MissingBrowserProfile => {
+            StatusCode::NOT_FOUND
+        }
+        BrowserPlanError::UnsupportedUrl => StatusCode::BAD_REQUEST,
+    }
+}
+
+fn normalize_browser_target_url(
+    target_url: Option<String>,
+) -> Result<Option<String>, BrowserPlanError> {
+    let Some(target_url) = target_url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    if target_url.starts_with("https://") || target_url.starts_with("http://") {
+        return Ok(Some(target_url));
+    }
+
+    Err(BrowserPlanError::UnsupportedUrl)
 }
 
 fn read_accounts(path: &Path) -> io::Result<Vec<ManagedAccount>> {
@@ -249,9 +305,12 @@ mod tests {
         let managed = account("google-work");
 
         let plan = managed
-            .browser_launch_plan(PathBuf::from("chrome.exe"))
+            .browser_launch_plan(PathBuf::from("chrome.exe"), None)
             .unwrap();
 
+        assert_eq!(plan.account_id, "google-work");
+        assert_eq!(plan.label, "Work");
+        assert_eq!(plan.credential_ref, Some("vault-google-work".to_string()));
         assert_eq!(plan.executable, PathBuf::from("chrome.exe"));
         assert!(plan
             .args
@@ -262,6 +321,35 @@ mod tests {
         assert!(plan
             .args
             .contains(&"--load-extension=E:/aeon-extension".to_string()));
+    }
+
+    #[test]
+    fn browser_launch_plan_appends_web_target_url() {
+        let managed = account("google-work");
+
+        let plan = managed
+            .browser_launch_plan(
+                PathBuf::from("chrome.exe"),
+                Some("https://example.test/work".to_string()),
+            )
+            .unwrap();
+
+        assert_eq!(
+            plan.args.last(),
+            Some(&"https://example.test/work".to_string())
+        );
+    }
+
+    #[test]
+    fn browser_launch_plan_rejects_non_web_target_url() {
+        let managed = account("google-work");
+
+        let result = managed.browser_launch_plan(
+            PathBuf::from("chrome.exe"),
+            Some("file:///C:/Users/Wc/secret.txt".to_string()),
+        );
+
+        assert!(matches!(result, Err(BrowserPlanError::UnsupportedUrl)));
     }
 
     #[test]
