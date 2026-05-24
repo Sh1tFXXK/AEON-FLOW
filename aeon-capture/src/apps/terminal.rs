@@ -115,7 +115,7 @@ struct TerminalHistory {
     content: String,
 }
 
-fn terminal_processes() -> [&'static str; 8] {
+fn terminal_processes() -> [&'static str; 15] {
     [
         "WindowsTerminal.exe",
         "wt.exe",
@@ -125,6 +125,13 @@ fn terminal_processes() -> [&'static str; 8] {
         "bash.exe",
         "mintty.exe",
         "wezterm-gui.exe",
+        "gnome-terminal",
+        "konsole",
+        "kitty",
+        "alacritty",
+        "wezterm",
+        "xterm",
+        "ghostty",
     ]
 }
 
@@ -143,6 +150,11 @@ fn running_terminal_processes() -> Vec<RunningTerminal> {
         return detailed;
     }
 
+    let unix = unix_terminal_processes();
+    if !unix.is_empty() {
+        return unix;
+    }
+
     terminal_processes()
         .iter()
         .filter(|process| process_exists(process))
@@ -154,6 +166,36 @@ fn running_terminal_processes() -> Vec<RunningTerminal> {
             command_line: None,
         })
         .collect()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn unix_terminal_processes() -> Vec<RunningTerminal> {
+    let mut rows = Vec::new();
+    for name in terminal_processes() {
+        let output = Command::new("pgrep").args(["-x", name]).output().ok();
+        let Some(output) = output else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let pid = line.trim().parse::<u32>().ok();
+            rows.push(RunningTerminal {
+                name: name.to_string(),
+                pid,
+                parent_pid: None,
+                executable_path: None,
+                command_line: None,
+            });
+        }
+    }
+    rows
+}
+
+#[cfg(target_os = "windows")]
+fn unix_terminal_processes() -> Vec<RunningTerminal> {
+    Vec::new()
 }
 
 #[cfg(target_os = "windows")]
