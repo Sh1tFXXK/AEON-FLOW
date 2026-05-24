@@ -356,26 +356,7 @@ fn recent_browser_pages(browser: &str, limit: usize) -> Vec<BrowserPage> {
 }
 
 fn chromium_history_path(browser: &str) -> Option<PathBuf> {
-    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
-    match browser {
-        "Chrome" => Some(
-            local
-                .join("Google")
-                .join("Chrome")
-                .join("User Data")
-                .join("Default")
-                .join("History"),
-        ),
-        "Edge" => Some(
-            local
-                .join("Microsoft")
-                .join("Edge")
-                .join("User Data")
-                .join("Default")
-                .join("History"),
-        ),
-        _ => None,
-    }
+    crate::platform::paths::chromium_history_path(browser)
 }
 
 fn latest_firefox_page() -> Option<BrowserPage> {
@@ -387,10 +368,7 @@ fn latest_firefox_page() -> Option<BrowserPage> {
 }
 
 fn latest_firefox_history_path() -> Option<PathBuf> {
-    let profiles = dirs::data_dir()?
-        .join("Mozilla")
-        .join("Firefox")
-        .join("Profiles");
+    let profiles = crate::platform::paths::firefox_profiles_dir()?;
     let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
     for profile in std::fs::read_dir(profiles).ok()?.flatten() {
         let path = profile.path().join("places.sqlite");
