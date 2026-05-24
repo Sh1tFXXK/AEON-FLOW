@@ -84,16 +84,21 @@ async fn main() {
         Some(event_log.clone()),
     ));
 
-    #[cfg(target_os = "windows")]
-    {
         let engine = capture_engine.clone();
-        tokio::spawn(async move {
-            aeon_capture::clipboard::start_clipboard_monitor(engine).await;
-        });
+    tokio::spawn(async move {
+        aeon_capture::clipboard::start_clipboard_monitor(engine).await;
+    });
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    {
         let engine = capture_engine.clone();
         tokio::spawn(async move {
             aeon_capture::os_activity::start_foreground_window_monitor(engine).await;
         });
+    }
+
+    #[cfg(target_os = "windows")]
+    {
         let engine = capture_engine.clone();
         tokio::spawn(async move {
             aeon_capture::os_activity::start_text_commit_monitor(engine).await;

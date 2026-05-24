@@ -33,6 +33,10 @@ scripts\aeon.cmd
 ```
 
 ```bash
+# Linux/macOS (native shell launcher)
+./scripts/aeon-linux.sh
+
+# Windows-compatible wrapper (calls powershell.exe)
 ./scripts/aeon.sh
 ```
 
@@ -49,6 +53,21 @@ processes started by the script:
 ```powershell
 .\scripts\aeon.ps1 -Mode stop
 ```
+
+
+## Linux Status (Important)
+
+On Linux, AEON service startup works, but some automatic desktop capture sources are currently Windows-only:
+
+- Clipboard background monitor is gated to Windows builds.
+- Foreground window / text commit OS activity monitors are gated to Windows builds.
+- Per-process window screenshot capture is Windows-only.
+
+Linux users can still capture content through:
+
+- Web API and UI actions (`/api/capture/text`, drag/drop to `/api/capture/drop`).
+- File and screenshot directory watchers when files are created in watched paths.
+- Relay imports and Android share/SMS/email bridge flows.
 
 ## Query Planner
 
