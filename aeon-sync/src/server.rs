@@ -137,6 +137,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/capture/text", post(ingest::capture_text))
         .route("/api/capture/webpage", post(ingest::capture_webpage))
         .route("/api/capture/drop", post(ingest::capture_drop))
+        .route("/api/capture/test-screenshot", get(ingest::test_screenshot))
         .route("/api/bridge/sms", post(crate::bridge::capture_sms))
         .route("/api/bridge/email", post(crate::bridge::capture_email))
         .route(

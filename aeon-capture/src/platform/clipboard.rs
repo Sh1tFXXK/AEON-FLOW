@@ -1,3 +1,4 @@
+use crate::platform::image::{clipboard_image_png, image_dimensions};
 use arboard::Clipboard;
 
 pub struct PlatformClipboard {
@@ -22,19 +23,8 @@ impl PlatformClipboard {
     }
 
     pub fn get_image(&mut self) -> Option<ClipboardImage> {
-        let image = self.inner.get_image().ok()?;
-        let width = image.width as u32;
-        let height = image.height as u32;
-        let rgba = image.bytes.into_owned();
-        let img = image::RgbaImage::from_raw(width, height, rgba)?;
-
-        let mut png = Vec::new();
-        let encoder = image::codecs::png::PngEncoder::new(&mut png);
-        use image::ImageEncoder;
-        encoder
-            .write_image(img.as_raw(), width, height, image::ExtendedColorType::Rgba8)
-            .ok()?;
-
+        let png = clipboard_image_png()?;
+        let (width, height) = image_dimensions(&png);
         Some(ClipboardImage { png, width, height })
     }
 }

@@ -118,3 +118,29 @@ pub async fn capture_drop(
 
     Ok(Json(serde_json::json!({"captured": captured})))
 }
+
+pub async fn test_screenshot() -> Json<serde_json::Value> {
+    let (method, dirs) = tokio::task::spawn_blocking(|| {
+        let dirs: Vec<String> = aeon_capture::platform::image::screenshot_save_dirs()
+            .into_iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        let method = aeon_capture::screen::screenshot_capability();
+        (method, dirs)
+    })
+    .await
+    .unwrap_or((None, Vec::new()));
+
+    match method {
+        Some(m) => Json(serde_json::json!({
+            "ok": true,
+            "method": m,
+            "watch_dirs": dirs,
+        })),
+        None => Json(serde_json::json!({
+            "ok": false,
+            "method": null,
+            "watch_dirs": dirs,
+        })),
+    }
+}

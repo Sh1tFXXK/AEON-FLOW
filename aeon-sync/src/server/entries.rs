@@ -9,10 +9,19 @@ pub struct EditEntryPayload {
 }
 
 #[derive(Deserialize, Default)]
+pub struct EntryListParams {
+    pub kind: Option<String>,
+    pub source: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Deserialize, Default)]
 pub struct EventListParams {
     pub from: Option<u64>,
     pub to: Option<u64>,
     pub limit: Option<usize>,
+    pub kind: Option<String>,
+    pub source: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -54,15 +63,34 @@ pub struct EventPayload {
     pub identity: String,
 }
 
-pub async fn list_entries(State(state): State<AppState>) -> Json<Vec<CapturePayload>> {
-    let entries = state
+pub async fn list_entries(
+    Query(params): Query<EntryListParams>,
+    State(state): State<AppState>,
+) -> Json<Vec<CapturePayload>> {
+    let limit = params.limit.unwrap_or(500).min(500);
+    let mut entries: Vec<CapturePayload> = state
         .capture_engine
         .list()
         .await
         .into_iter()
         .map(capture_payload)
         .collect();
+
+    if let Some(kind) = params.kind.as_deref() {
+        let kind = kind.to_ascii_lowercase();
+        entries.retain(|e| entry_matches_kind(&e.kind, &kind));
+    }
+    if let Some(source) = params.source.as_deref() {
+        let source = source.to_ascii_lowercase();
+        entries.retain(|e| e.source.to_ascii_lowercase() == source);
+    }
+    entries.truncate(limit);
     Json(entries)
+}
+
+fn entry_matches_kind(kind: &str, filter: &str) -> bool {
+    kind.eq_ignore_ascii_case(filter)
+        || kind.to_ascii_lowercase().starts_with(&filter.to_ascii_lowercase())
 }
 
 impl EventListParams {
@@ -83,14 +111,39 @@ pub async fn list_events(
     Query(params): Query<EventListParams>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<EventPayload>>, StatusCode> {
+    let kind_filter = params.kind.clone();
+    let source_filter = params.source.clone();
     let query = params.try_into_query()?;
-    let events = state
+    let mut events = state
         .event_log
         .lock()
         .await
         .list(query)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if let Some(kind) = kind_filter.as_deref() {
+        let kind = kind.to_ascii_lowercase();
+        events.retain(|event| event_matches_kind_filter(event, &kind));
+    }
+    if let Some(source) = source_filter.as_deref() {
+        let source = source.to_ascii_lowercase();
+        events.retain(|event| event_matches_source_filter(event, &source));
+    }
     Ok(Json(events.into_iter().map(event_payload).collect()))
+}
+
+fn event_matches_kind_filter(event: &aeon_capture::AeonEvent, filter: &str) -> bool {
+    let aeon_capture::EventKind::CaptureAdded(capture) = &event.kind;
+    let key = capture.capture_kind.key();
+    key.eq_ignore_ascii_case(filter) || key.to_ascii_lowercase().starts_with(filter)
+}
+
+fn event_matches_source_filter(event: &aeon_capture::AeonEvent, filter: &str) -> bool {
+    match &event.source {
+        aeon_capture::EventSource::LocalCapture(source) => {
+            super::shared::source_key(source).eq_ignore_ascii_case(filter)
+        }
+        aeon_capture::EventSource::RelayImport { .. } => filter == "peersync",
+    }
 }
 
 pub async fn get_event(

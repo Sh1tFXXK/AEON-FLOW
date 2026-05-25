@@ -5,6 +5,16 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
+fn bind_tcp_listener(addr: SocketAddr) -> std::io::Result<tokio::net::TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_reuse_address(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(4096)?;
+    tokio::net::TcpListener::from_std(socket.into())
+}
+
 mod account_profiles;
 mod bridge;
 mod email_imap;
@@ -105,8 +115,7 @@ async fn main() {
         });
     }
 
-    let _screenshot_watcher =
-        aeon_capture::screenshot::start_screenshot_monitor(capture_engine.clone()).ok();
+    aeon_capture::screenshot::start(capture_engine.clone());
     let _capture_file_watcher =
         aeon_capture::file::start_file_monitor(capture_engine.clone(), vec![sync_dir.clone()]).ok();
     let app_registry = Arc::new(apps::default_registry(capture_engine.clone()));
@@ -195,8 +204,7 @@ async fn main() {
     }
     println!("----------------------------------------");
 
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
+    let listener = bind_tcp_listener(addr)
         .expect("bind failed");
     axum::serve(
         listener,
@@ -213,8 +221,7 @@ async fn spawn_embedded_relay(config: RelayServeConfig) {
     let addr: SocketAddr = format!("0.0.0.0:{}", config.port)
         .parse()
         .expect("invalid relay addr");
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
+    let listener = bind_tcp_listener(addr)
         .expect("embedded relay bind failed");
 
     println!("AEON embedded Relay started");
@@ -245,8 +252,7 @@ async fn run_relay_mode(args: Vec<String>) {
     println!("URL:   http://0.0.0.0:{}", config.port);
     println!("----------------------------------------");
 
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
+    let listener = bind_tcp_listener(addr)
         .expect("relay bind failed");
     axum::serve(listener, app)
         .await

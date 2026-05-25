@@ -1,6 +1,7 @@
 use crate::capture::{CaptureEntry, CaptureKind, CaptureSource};
 use crate::clipboard::detect_text_kind;
 use crate::engine::CaptureEngine;
+use crate::platform::image::{image_dimensions as platform_image_dimensions, is_image_file, read_image_as_png};
 use crate::screenshot::{image_dimensions, is_image};
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
@@ -54,15 +55,43 @@ pub async fn capture_path(
     if !metadata.is_file() {
         return None;
     }
-    let data = tokio::fs::read(&path).await.ok()?;
-    if data.is_empty() {
-        return None;
-    }
-
     if let CaptureSource::FileWatch { path: source_path } = &mut source {
         if source_path.is_empty() {
             *source_path = path.to_string_lossy().to_string();
         }
+    }
+
+    if is_image_file(&path) {
+        let path_for_blocking = path.clone();
+        let png_result = tokio::task::spawn_blocking(move || read_image_as_png(&path_for_blocking))
+            .await
+            .ok()
+            .flatten();
+        if let Some(png) = png_result {
+            let (width, height) = platform_image_dimensions(&png);
+            let title = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("captured-image")
+                .to_string();
+            let mut entry = CaptureEntry::new(
+                png,
+                CaptureKind::Image {
+                    width,
+                    height,
+                    format: "png".into(),
+                },
+                source,
+            )
+            .with_title(&title);
+            entry.meta.file_path = Some(path.to_string_lossy().to_string());
+            return engine.capture(entry).await.ok();
+        }
+    }
+
+    let data = tokio::fs::read(&path).await.ok()?;
+    if data.is_empty() {
+        return None;
     }
 
     let kind = kind_from_path(&path, &data);

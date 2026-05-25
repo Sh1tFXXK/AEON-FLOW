@@ -8,6 +8,7 @@ pub mod event_log;
 pub mod file;
 pub mod os_activity;
 pub mod platform;
+pub mod screen;
 pub mod screenshot;
 pub mod store;
 

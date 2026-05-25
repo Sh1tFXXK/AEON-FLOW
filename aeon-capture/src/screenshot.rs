@@ -1,69 +1,146 @@
 use crate::capture::{CaptureEntry, CaptureKind, CaptureSource};
 use crate::engine::CaptureEngine;
-use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+use crate::platform::image::{
+    image_dimensions as platform_image_dimensions, is_image_file, is_screenshot_file,
+    read_image_as_png, screenshot_candidate_dirs, screenshot_save_dirs,
+};
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
-pub fn start_screenshot_monitor(engine: Arc<CaptureEngine>) -> notify::Result<RecommendedWatcher> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
+/// 监听截图工具保存文件的目录（不主动截屏）。
+pub fn start(engine: Arc<CaptureEngine>) {
+    let dirs = screenshot_save_dirs();
 
-    for dir in crate::platform::paths::screenshot_dirs() {
-        if dir.exists() {
-            watcher.watch(&dir, RecursiveMode::Recursive)?;
+    if dirs.is_empty() {
+        eprintln!("[capture/screenshot] No screenshot directories found.");
+        eprintln!("[capture/screenshot] Expected dirs:");
+        for d in screenshot_candidate_dirs() {
+            eprintln!("  {}", d.display());
         }
+        return;
     }
 
-    let handle = tokio::runtime::Handle::current();
+    println!(
+        "[capture/screenshot] Watching {} directories:",
+        dirs.len()
+    );
+    for d in &dirs {
+        println!("  {}", d.display());
+    }
+
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        eprintln!("[capture/screenshot] ERROR: must call start() from a tokio runtime (Handle::current missing)");
+        return;
+    };
+
     std::thread::spawn(move || {
-        for event in rx.into_iter().flatten() {
+        let (tx, rx) = std::sync::mpsc::channel::<notify::Result<Event>>();
+        let Ok(mut watcher) = RecommendedWatcher::new(tx, Config::default()) else {
+            eprintln!("[capture/screenshot] watcher init failed");
+            return;
+        };
+
+        for dir in &dirs {
+            if let Err(e) = watcher.watch(dir, RecursiveMode::Recursive) {
+                eprintln!("[capture/screenshot] watch failed {}: {e}", dir.display());
+            }
+        }
+
+        let mut recent: HashMap<PathBuf, Instant> = HashMap::new();
+
+        for result in rx {
+            let event = match result {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            let is_new_file = matches!(
+                event.kind,
+                EventKind::Create(_)
+                    | EventKind::Modify(notify::event::ModifyKind::Data(_))
+                    | EventKind::Modify(notify::event::ModifyKind::Name(_))
+            );
+            if !is_new_file {
+                continue;
+            }
+
             for path in event.paths {
-                if is_image(&path) {
-                    let engine = engine.clone();
-                    handle.spawn(async move {
-                        capture_image(engine, path).await;
-                    });
+                if !is_screenshot_file(&path) {
+                    continue;
                 }
+
+                let now = Instant::now();
+                if let Some(&last) = recent.get(&path) {
+                    if now.duration_since(last).as_secs() < 2 {
+                        continue;
+                    }
+                }
+                recent.insert(path.clone(), now);
+                recent.retain(|_, t| now.duration_since(*t).as_secs() < 10);
+
+                let eng = engine.clone();
+                let p = path.clone();
+                runtime.spawn(async move {
+                    capture_screenshot_file(&p, eng).await;
+                });
             }
         }
     });
-
-    Ok(watcher)
 }
 
+async fn capture_screenshot_file(path: &Path, engine: Arc<CaptureEngine>) {
+    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
 
-pub async fn capture_image(engine: Arc<CaptureEngine>, path: PathBuf) {
-    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    let path = path.to_path_buf();
+    if !path.is_file() {
+        return;
+    }
+    let path_str = path.to_string_lossy().to_string();
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let path_for_read = path.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        read_image_as_png(&path_for_read).map(|png| {
+            let (w, h) = platform_image_dimensions(&png);
+            (png, w, h)
+        })
+    })
+    .await
+    .unwrap_or(None);
 
-    let Ok(data) = tokio::fs::read(&path).await else {
+    let Some((png, width, height)) = result else {
+        eprintln!("[capture/screenshot] failed to read: {path_str}");
         return;
     };
-    let (width, height) = image_dimensions(&data).unwrap_or((0, 0));
-    let format = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("png")
-        .to_lowercase();
-    let title = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("screenshot")
-        .to_string();
 
     let mut entry = CaptureEntry::new(
-        data,
+        png,
         CaptureKind::Image {
             width,
             height,
-            format,
+            format: "png".into(),
         },
         CaptureSource::Screenshot,
     )
-    .with_title(&title);
-    entry.meta.file_path = Some(path.to_string_lossy().to_string());
+    .with_title(&filename);
+    entry.meta.file_path = Some(path_str.clone());
+    entry.meta.extra.insert("filename".into(), filename);
 
-    let _ = engine.capture(entry).await;
+    match engine.capture(entry).await {
+        Ok(_) => println!("[capture/screenshot] Captured: {path_str}"),
+        Err(e) => eprintln!("[capture/screenshot] capture failed {path_str}: {e}"),
+    }
+}
+
+pub async fn capture_image(engine: Arc<CaptureEngine>, path: PathBuf) {
+    capture_screenshot_file(&path, engine).await;
 }
 
 #[cfg(target_os = "windows")]
@@ -257,13 +334,7 @@ pub fn capture_window_screenshot_bytes(_pid: u32) -> Result<(Vec<u8>, u32, u32),
 }
 
 pub fn is_image(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.to_ascii_lowercase())
-            .as_deref(),
-        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
-    )
+    is_image_file(path)
 }
 
 pub fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
