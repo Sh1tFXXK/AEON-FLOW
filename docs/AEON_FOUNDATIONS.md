@@ -2,7 +2,21 @@
 
 Date: 2026-05-18
 
-This document records the implemented AEON foundations that sit above the original capture stream.
+This document records the implemented AEON foundations that sit above the
+original capture stream.
+
+AEON's product direction is a user-owned compute fabric: authorized devices,
+accounts, applications, files, browser state, runtime state, and task context
+become one local-first operating layer. A task belongs to AEON rather than to a
+single device. Devices are entry points into the task fabric; AI can reason
+beside the fabric, while AEON owns typed state, credentials, permissions,
+transport, recovery, and audit history.
+
+These foundations are intentionally constrained. They establish typed capture,
+event history, context, identity, vault, account, relay, and VM primitives
+without creating a central god object. Remote access is limited to authorized
+devices, networks, relays, and future sync packages; AEON does not scan,
+exploit, or bypass third-party systems.
 
 ## Implemented Foundations
 

@@ -1,9 +1,38 @@
 # AEON Flow
 
-AEON Flow is a personal operating layer for capture, context, identity, and
-cross-device continuity. It is not a generic file uploader. It turns current
-work into local, addressable, searchable data that can be synced and resumed
-across devices.
+AEON Flow is a user-owned compute fabric for capture, context, identity,
+execution, and cross-device continuity. It turns the user's authorized devices,
+accounts, applications, files, browser state, runtime state, and task context
+into one local-first operating layer.
+
+The core abstraction is that a task belongs to AEON, not to one device. Any
+device should be able to become an entry point into the same task surface, while
+AEON handles state capture, capability routing, synchronization, recovery,
+permissions, and audit history. AI sits beside this fabric as the reasoning
+layer: AI can interpret intent and propose actions, but AEON owns the typed
+state, device boundaries, credentials, and execution permissions.
+
+AEON is not a generic file uploader, a pure AI memory product, or an
+unauthorized network access tool. It only works across devices, accounts,
+applications, and networks the user owns or explicitly authorizes.
+
+## Product Direction
+
+AEON is moving toward a personal compute fabric:
+
+- **Universal task surface:** tasks are portable envelopes containing intent,
+  context, inputs, outputs, permissions, execution log, and recovery points.
+- **Device-independent access:** phones, desktops, browsers, VMs, and future
+  agents are terminals into the same task fabric, not separate product silos.
+- **State mirror:** authorized device state becomes typed, local, searchable,
+  and resumable without relying on OCR, keylogging, or hidden mutation.
+- **Capability abstraction:** low-level device, OS, app, account, and network
+  differences are hidden behind explicit AEON capabilities.
+- **Network-agnostic continuity:** LAN, relay, direct TCP, USB, portable sync
+  packages, and future offline exchange are transport choices; the task model
+  must not depend on always-on internet.
+- **AI-adjacent execution:** AI can plan and request capabilities, but AEON
+  enforces permissions, local ownership, provenance, and auditability.
 
 ## Current Direction
 
@@ -17,6 +46,16 @@ Capture is OS-event first:
   pipeline.
 - Screenshots can be stored as image artifacts, but AEON does not derive
   timeline text from pixels.
+
+Execution and synchronization remain explicitly bounded:
+
+- Devices retain local ownership of their state and credentials.
+- Background workers emit typed records and messages; they do not mutate
+  render-visible state directly.
+- Cross-device exchange is eventually consistent unless a specific runtime path
+  documents stronger guarantees.
+- Remote access must be authorized. AEON does not scan, exploit, or bypass
+  third-party systems.
 
 ## Quick Start
 
@@ -87,7 +126,9 @@ USB reverse is a development fallback:
 ## Relay Mode
 
 When devices cannot directly reach the desktop LAN, run a public or private
-AEON Relay and connect each device to the same relay space.
+AEON Relay and connect each device to the same relay space. Relay is one
+transport for the fabric, not the fabric itself; local LAN discovery and future
+offline package exchange should remain first-class paths.
 
 Relay only:
 
@@ -163,7 +204,7 @@ More VM details are in [aeon-vm/README.md](aeon-vm/README.md).
 - `aeon-vm/`: snapshot, restore, migration, daemon, and CLI prototype
 - `aeon-agent/`: early point-to-point sync agent
 - `aeon-browser-extension/`: browser URL/code/password fill bridge
-- `docs/`: capture, relay, event timeline, architecture, and smoke docs
+- `docs/`: capture, relay, event timeline, foundations, and smoke docs
 
 ## Development Checks
 
