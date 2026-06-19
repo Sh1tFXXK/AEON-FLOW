@@ -1,6 +1,6 @@
 use crate::eventlog::AeonEvent;
 use crate::program::Program;
-use crate::snapshot::Snapshot;
+use crate::snapshot::{Snapshot, SnapshotDelta};
 use crate::store::ProgramStore;
 use crate::vm::VMState;
 use serde::{Deserialize, Serialize};
@@ -182,11 +182,13 @@ impl DaemonState {
             .map_err(|err| format!("load program: {}", err))?;
         let store = ProgramStore::new();
         store.add(program.clone());
-        let snap = Snapshot::load(Path::new(&record.snapshot_path))
+        let base_snapshot = Snapshot::load(Path::new(&record.snapshot_path))
             .map_err(|err| format!("load snapshot: {}", err))?;
-        let mut state = snap.restore(&store)?;
+        let mut state = base_snapshot.restore(&store)?;
         state.run(&program).map_err(|err| err.to_string())?;
-        let final_snap = Snapshot::capture(&state);
+
+        let delta = SnapshotDelta::capture(&state);
+        let final_snap = delta.apply_to(&base_snapshot)?;
         final_snap
             .save(Path::new(&record.snapshot_path))
             .map_err(|err| format!("save snapshot: {}", err))?;

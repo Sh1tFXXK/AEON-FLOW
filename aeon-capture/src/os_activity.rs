@@ -201,180 +201,12 @@ impl OsActivity {
     }
 }
 
-#[cfg(target_os = "windows")]
 pub fn current_foreground_window() -> Option<ForegroundWindow> {
-    let script = r#"
-$ErrorActionPreference = 'Stop'
-Add-Type @"
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-public class AeonForegroundWindow {
-    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-    [DllImport("user32.dll")] public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
-    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-}
-"@
-$hwnd = [AeonForegroundWindow]::GetForegroundWindow()
-if ($hwnd -eq [IntPtr]::Zero) { exit 0 }
-$pidValue = [uint32]0
-[AeonForegroundWindow]::GetWindowThreadProcessId($hwnd, [ref]$pidValue) | Out-Null
-if ($pidValue -eq 0) { exit 0 }
-$titleBuilder = New-Object System.Text.StringBuilder 512
-[AeonForegroundWindow]::GetWindowTextW($hwnd, $titleBuilder, $titleBuilder.Capacity) | Out-Null
-$title = $titleBuilder.ToString().Trim()
-if (-not $title) { exit 0 }
-$rect = New-Object AeonForegroundWindow+RECT
-$bounds = $null
-if ([AeonForegroundWindow]::GetWindowRect($hwnd, [ref]$rect)) {
-    $bounds = [pscustomobject]@{
-        left = $rect.Left
-        top = $rect.Top
-        width = $rect.Right - $rect.Left
-        height = $rect.Bottom - $rect.Top
-    }
-}
-$processName = $null
-try {
-    $processName = (Get-Process -Id $pidValue -ErrorAction Stop).ProcessName
-} catch {}
-[pscustomobject]@{
-    pid = [uint32]$pidValue
-    process_name = $processName
-    title = $title
-    bounds = $bounds
-} | ConvertTo-Json -Depth 4
-"#;
-
-    let Ok(output) = std::process::Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ])
-        .output()
-    else {
-        return None;
-    };
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    serde_json::from_str::<ForegroundWindow>(trimmed).ok()
+    crate::platform::os_activity::current_foreground_window()
 }
 
-#[cfg(not(target_os = "windows"))]
-pub fn current_foreground_window() -> Option<ForegroundWindow> {
-    None
-}
-
-#[cfg(target_os = "windows")]
 pub fn current_text_commit() -> Option<TextCommit> {
-    let script = r#"
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-Add-Type @"
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-public class AeonForegroundTitle {
-    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
-    public static string Read() {
-        IntPtr hwnd = GetForegroundWindow();
-        if (hwnd == IntPtr.Zero) return null;
-        StringBuilder text = new StringBuilder(512);
-        GetWindowTextW(hwnd, text, text.Capacity);
-        string value = text.ToString().Trim();
-        return value.Length == 0 ? null : value;
-    }
-}
-"@
-$element = [System.Windows.Automation.AutomationElement]::FocusedElement
-if ($null -eq $element) { exit 0 }
-
-$text = $null
-$valuePattern = $null
-if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
-    try { $text = $valuePattern.Current.Value } catch {}
-}
-
-if ([string]::IsNullOrWhiteSpace($text)) {
-    $textPattern = $null
-    if ($element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$textPattern)) {
-        try { $text = $textPattern.DocumentRange.GetText(4096) } catch {}
-    }
-}
-
-if ([string]::IsNullOrWhiteSpace($text)) { exit 0 }
-$text = $text.TrimEnd("`r", "`n")
-
-$isPassword = $false
-try {
-    $isPassword = [bool]$element.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsPasswordProperty)
-} catch {
-    $isPassword = $true
-}
-
-$pidValue = 0
-$appName = $null
-try {
-    $pidValue = [int]$element.Current.ProcessId
-    if ($pidValue -gt 0) {
-        $appName = (Get-Process -Id $pidValue -ErrorAction Stop).ProcessName
-    }
-} catch {}
-
-$controlName = $null
-try {
-    $controlName = $element.Current.Name
-    if ([string]::IsNullOrWhiteSpace($controlName)) { $controlName = $null }
-} catch {}
-
-[pscustomobject]@{
-    text = $text
-    app_name = $appName
-    window_title = [AeonForegroundTitle]::Read()
-    control_name = $controlName
-    sensitivity = $(if ($isPassword) { "Sensitive" } else { "NonSensitive" })
-} | ConvertTo-Json -Depth 4
-"#;
-
-    let Ok(output) = std::process::Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ])
-        .output()
-    else {
-        return None;
-    };
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    parse_text_commit_json(trimmed).ok()
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn current_text_commit() -> Option<TextCommit> {
-    None
+    crate::platform::os_activity::current_text_commit()
 }
 
 pub async fn start_foreground_window_monitor(engine: Arc<CaptureEngine>) {
@@ -403,7 +235,7 @@ pub async fn start_foreground_window_monitor_with_interval(
         }
         last_signature = Some(signature);
 
-        let activity = OsActivity::window_focus(window, OsCaptureProvider::WinEventHook);
+        let activity = OsActivity::window_focus(window, crate::platform::os_activity::foreground_provider());
         let Ok(entry) = activity.into_capture_entry() else {
             continue;
         };
@@ -422,7 +254,7 @@ pub async fn start_text_commit_monitor_with_interval(engine: Arc<CaptureEngine>,
         let Some(commit) = current_text_commit() else {
             continue;
         };
-        let Some(activity) = tracker.next_activity(commit, OsCaptureProvider::WindowsUiAutomation)
+        let Some(activity) = tracker.next_activity(commit, crate::platform::os_activity::text_commit_provider())
         else {
             continue;
         };

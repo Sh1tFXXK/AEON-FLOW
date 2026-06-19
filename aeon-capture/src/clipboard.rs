@@ -1,11 +1,18 @@
 use crate::capture::{CaptureEntry, CaptureKind, CaptureSource};
 use crate::engine::CaptureEngine;
+use crate::platform::clipboard::PlatformClipboard;
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
 
-#[cfg(target_os = "windows")]
 pub async fn start_clipboard_monitor(engine: Arc<CaptureEngine>) {
-    use clipboard_win::{formats, get_clipboard};
+    let mut clipboard = match PlatformClipboard::new() {
+        Ok(c) => c,
+        Err(err) => {
+            tracing_like_warn(&format!("clipboard init failed: {err}"));
+            futures_pending().await;
+            return;
+        }
+    };
 
     let mut last_cid: Option<[u8; 32]> = None;
     let mut ticker = interval(Duration::from_millis(500));
@@ -13,32 +20,42 @@ pub async fn start_clipboard_monitor(engine: Arc<CaptureEngine>) {
     loop {
         ticker.tick().await;
 
-        let text: Result<String, _> = get_clipboard(formats::Unicode);
-        let Ok(text) = text else {
-            continue;
-        };
-        if text.trim().is_empty() {
-            continue;
+        if let Some(text) = clipboard.get_text() {
+            if !text.trim().is_empty() {
+                let data = text.as_bytes().to_vec();
+                let cid = *blake3::hash(&data).as_bytes();
+                if Some(cid) != last_cid {
+                    last_cid = Some(cid);
+
+                    let kind = detect_text_kind(&text);
+                    let entry = CaptureEntry::new(data, kind, CaptureSource::Clipboard);
+                    if let Err(err) = engine.capture(entry).await {
+                        tracing_like_warn(&format!("clipboard capture failed: {err}"));
+                    }
+                }
+            }
         }
 
-        let data = text.as_bytes().to_vec();
-        let cid = *blake3::hash(&data).as_bytes();
-        if Some(cid) == last_cid {
-            continue;
-        }
-        last_cid = Some(cid);
-
-        let kind = detect_text_kind(&text);
-        let entry = CaptureEntry::new(data, kind, CaptureSource::Clipboard);
-        if let Err(err) = engine.capture(entry).await {
-            tracing_like_warn(&format!("clipboard capture failed: {err}"));
+        if let Some(image) = clipboard.get_image() {
+            let cid = *blake3::hash(&image.png).as_bytes();
+            if Some(cid) != last_cid {
+                last_cid = Some(cid);
+                let entry = CaptureEntry::new(
+                    image.png,
+                    CaptureKind::Image {
+                        width: image.width,
+                        height: image.height,
+                        format: "png".to_string(),
+                    },
+                    CaptureSource::Clipboard,
+                )
+                .with_title("clipboard-image");
+                if let Err(err) = engine.capture(entry).await {
+                    tracing_like_warn(&format!("clipboard image capture failed: {err}"));
+                }
+            }
         }
     }
-}
-
-#[cfg(not(target_os = "windows"))]
-pub async fn start_clipboard_monitor(_engine: Arc<CaptureEngine>) {
-    futures_pending().await;
 }
 
 pub fn detect_text_kind(text: &str) -> CaptureKind {
@@ -81,7 +98,6 @@ pub fn detect_language(code: &str) -> String {
     "代码".to_string()
 }
 
-#[cfg(not(target_os = "windows"))]
 async fn futures_pending() {
     std::future::pending::<()>().await;
 }
