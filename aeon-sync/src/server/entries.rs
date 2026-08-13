@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 use super::shared::*;
 
@@ -274,6 +274,8 @@ mod tests {
             from: Some(10),
             to: Some(20),
             limit: Some(5000),
+            kind: None,
+            source: None,
         }
         .try_into_query()
         .unwrap();
@@ -285,6 +287,8 @@ mod tests {
             from: None,
             to: None,
             limit: Some(0),
+            kind: None,
+            source: None,
         };
         assert!(zero_limit.try_into_query().is_err());
     }
