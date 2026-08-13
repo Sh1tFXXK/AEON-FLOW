@@ -5,6 +5,10 @@ cross-device continuity. It is not a generic file uploader. It turns current
 work into local, addressable, searchable data that can be synced and resumed
 across devices.
 
+## Project Status
+
+As of 2026-08-13, AEON Flow is a feature-rich local-first proof of concept / alpha foundation: many subsystems are runnable and tested locally, but real-device, real-account, and public-relay hardening work remains before it should be treated as production-ready. See [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for the repository-wide status assessment.
+
 ## Current Direction
 
 Capture is OS-event first:
